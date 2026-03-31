@@ -5,7 +5,6 @@ import random
 from dataclasses import dataclass
 from typing import Optional
 
-import faiss
 import numpy as np
 import pandas as pd
 import torch
@@ -184,6 +183,8 @@ def encode_corpus(model, tokenizer, texts, cfg: TrainConfig, device: str):
 
 
 def build_and_save_faiss(embeddings: np.ndarray, out_dir: str, prefix: str):
+    import faiss
+
     embs = embeddings.copy()
     faiss.normalize_L2(embs)
     index = faiss.IndexFlatIP(embs.shape[1])

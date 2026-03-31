@@ -111,7 +111,7 @@ def clean_en():
 
 def combine_en(translation_path=cleaned_en_path, save_path=combined_en_path):
   translation_df = load(translation_path)
-  translation_df.drop(columns=['manual_location', 'manual_type', 'manual_alternative'], inplace=True)
+  translation_df.drop(columns=['manual_location', 'manual_type', 'manual_alternative'], inplace=True, errors='ignore')
   location_manual_df = load(location_manual_path)
   location_df = pd.merge(translation_df, location_manual_df, left_on='id_en', right_on='id_en', how='left')
 
