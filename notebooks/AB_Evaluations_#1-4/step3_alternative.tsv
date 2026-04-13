@@ -1,0 +1,101 @@
+id_en	text_clean	manual_alternative	predicted_alternative	predicted_location	predicted_type
+en_6789	There was a sale at the fish market today. I went to see what was the catch.	catch	catch	catch	homographic
+en_3677	She was suspected of stealing a brooch but they couldn't pin it on her.	pin	pin	pin	homographic
+en_4418	"When asked by her co-workers whether they should bring a gift to her birthday party, Mary replied,"" You should know that all I'm interested in is your presence."""	presents	presence	presence	homographic
+en_4428	I want to buy that big diamond, he said hopefully.	hopefully	hopeful	hopefully	homophonic
+en_6161	Camille relocated to Little Italy: They made her a cougher; she couldn't refuse	offer	cougher	cougher	homophonic
+en_2829	The lumber company downsized. They got rid of the deadwood.	deadwood	deadwood	deadwood	homographic
+en_7208	It was the first time she'd seen a live sponge on display, and she really soaked it in.	soaked	soaked	soaked	homographic
+en_1494	Some cardiologists are heartless.	heartless	hartless	heartless	homophonic
+en_1370	Old chemists never die, they just stop reacting.	reacting	rocketing	reacting	homophonic
+en_4921	A noun and a verb were dating but they broke up because the noun was too possessive.	possesive	two	too	homophonic
+en_2630	Early nuclear experimenters discovered an element of surprise.	element	surprise	surprise	homographic
+en_4113	My uncle developed a strange vulgar habit. He would only cuss when he'd eat chicken. The doctor said he has seen this happen in some cases. Too much chicken can produce a fowl mouth.	foul	foul	fowl	homophonic
+en_1282	In ancient times, seagoing vessels were much more fuel efficient. They got thousands of miles to the galleon.	gallon	galyean	galleon	homophonic
+en_5205	Many people think that Edgar Allan Poe was a raven madman.	raving	madmen	madman	homophonic
+en_3799	I'm a mathematician, he added summarily.	sum	simerly	summarily	homophonic
+en_4025	Businesses selling pleasure boats often have a sail.	sale	sale	sail	homophonic
+en_5620	Our garden hose was damaged yesterday, and I couldn't get to the leek without getting wet.	leak	leak	leek	homophonic
+en_156	A new type of broom came out, it is sweeping the nation.	sweeping	nation	nation	homographic
+en_3291	Have you ever been whitewater rafting? he asked rapidly.	rapidly	raptly	rapidly	homophonic
+en_8296	Old cheese makers never die, they just lose their whey	way	waye	whey	homophonic
+en_4010	Old plagiarists never die, they just steal away.	steal	steel	steal	homophonic
+en_7125	A boating accident between the yacht, Red Dawn, and the schooner, Blue Lagoon, left the survivors marooned.	maroon	mourned	marooned	homophonic
+en_7031	The doctor couldn't transfer the organs because he didn't have the guts to do it.	guts	cuts	guts	homophonic
+en_5633	My friend's bakery burned down last night. Now his business is toast.	toast	toast	toast	homographic
+en_425	Data got into so much trouble, her parents sent her packeting.	packing	pocketing	packeting	homophonic
+en_4991	Workers in an upholstery business demanded a wage hike to cushion the high cost of living.	cushion	kost	cost	homophonic
+en_3613	I bought myself fifty hamburgers and I've only ten left, he said with fortitude.	forty-tude	fortitude	fortitude	homophonic
+en_1360	A book called 'Current Trends in Wiring your House' turned out to be a shocking failure.	shocking	shocking	shocking	homographic
+en_2212	I bought me some of those new paper shirts. I don't like them-they're tearable.	terrible	terrible	tearable	homophonic
+en_6441	The dervish had so much endurance, he set a new whirled record.	world	whirled	whirled	homographic
+en_6365	Dry cleaners are often pressed for time.	pressed	pressed	pressed	homographic
+en_1386	3.14159265, he said piously.	pi	pasley	piously	homophonic
+en_1273	Three fingers were willing to cooperate but the thumb and forefinger were opposed.	opposed	opposed	opposed	homographic
+en_6722	Communism is a complicated thing. You must think about from all sorts of Engels.	angles	engels	engels	homophonic
+en_1181	Old tree surgeons never die, they are just uprooted.	uprooted	uprooted	uprooted	homophonic
+en_6244	His affection for her was more than a passion interest.	passing	passion	passion	homographic
+en_6734	An argument at the Bomb Squad convention ended in a blowup.	blowup	blowup	blowup	homographic
+en_4012	She memorized just what kind of locket she wanted, by heart.	heart	heart	heart	homographic
+en_2955	The psychotic florist created many flower derangements.	arrangements	derangements	derangements	homophonic
+en_5771	He avoided funerals because he was not a mourning person.	morning	mourning	mourning	homographic
+en_442	Old tree surgeons never die, they just pine away.	pine	pyne	pine	homophonic
+en_2198	I like ragged margins, he said without justification.	justification	justification	justification	homographic
+en_7282	She was only a Catcher's daughter, but she had many balls bounce off her chin.	balls	chinh	chin	homophonic
+en_1883	A group called the Balloons sings pop music.	pop	pop	pop	homographic
+en_5167	I'll tempt Adam tonight, she said evilly.	eve	eiffel	evilly	homophonic
+en_7383	Doctor, doctor, I keep thinking I'm a billiard ball.-Get back in the queue. Next.	cue	cue	queue	homophonic
+en_2942	Even though Ashley was blind and under arrest, she still had hope that someone would brail her out.	bail	broil	brail	homophonic
+en_4682	Why was the car embarrassed? Because it had gas!	gas	gass	gas	homophonic
+en_2851	His business plan to manufacture scissors just didn't cut it.	cut	cut	cut	homographic
+en_2260	After the sniper attack at the symphony softball game, there were no men left on bass.	base	bass	bass	homographic
+en_4463	Old mediums never die, they just lose their spirits.	spirits	spirits	spirits	homographic
+en_652	Before the golfer finished drinking the iced, brewed beverage he dropped his tee on the cart path.	tea	tea	tee	homophonic
+en_4077	Old eskimos never die, they just go cold.	cold	cold	cold	homographic
+en_2144	There was a guy who was fired from the orange juice factory for lack of concentration.	concentrate	concentration	concentration	homographic
+en_6913	I get my large circumference from too much pi.	pie	two	too	homophonic
+en_3396	The careless pyromaniac made an ash of himself.	ass	asch	ash	homophonic
+en_1256	I might study something at a university that someone once told me about-there is a degree of ambiguity there.	degree	ambiguity	ambiguity	homographic
+en_6343	Pencil sharpeners have a tough life-they live off tips.	tips	tips	tips	homographic
+en_2410	Company's coming, he guessed.	guest	guest	guessed	homophonic
+en_6914	What keeps a dock floating above water? Pier pressure.	peer	peer	pier	homophonic
+en_2977	Be true to your teeth, or they will be false to you.	false	false	false	homographic
+en_3195	My stereo's half-fixed, he said monotonously.	monotone	monotonously	monotonously	homophonic
+en_7219	I was the first to climb Mount Everest, he said hilariously.	hillary	hilariously	hilariously	homophonic
+en_2740	He and his partner made knives, and they shared a cut.	cut	cut	cut	homographic
+en_3189	If you want a metal dog leash go to a chain store.	chain	chain	chain	homographic
+en_6140	Old tree surgeons never die, they just take a final bough.	bow	bow	bough	homophonic
+en_6532	A case of disappearing bison had police completely buffaloed.	buffalo	bevelled	buffaloed	homophonic
+en_4520	Old chemists never die, they just fail to react.	react	racked	react	homophonic
+en_1399	Old shoemakers never die, they are just given the boot.	boot	boot	boot	homographic
+en_2010	I feel empty inside, he hollered.	hole	hillard	hollered	homophonic
+en_6330	The triglyph commented, 'It's friezing in here..	freezing	freezing	friezing	homophonic
+en_2024	The Biomedical Engineer didn't have the heart to check the EKG machine.	heart	machine	machine	homographic
+en_7096	Two banks with different rates have a conflict of interest.	interest	interest	interest	homographic
+en_215	When it got stuck in the mud my car had to be toad.	towed	toed	toad	homophonic
+en_389	Rabbits like their beer brewed with a lot of hops.	hops	hops	hops	homographic
+en_2329	I'd really like to know whether her collapse was due to a serious illness or whether it was one of her usual feints.	faints	fiends	feints	homophonic
+en_4342	I've gained thirty pounds, he said heavily.	heavily	heavily	heavily	homographic
+en_45	Old antenna engineers never die, they just phase away.	fade	faze	phase	homophonic
+en_6639	The dieters vowed to let nothing go to waist.	waste	waste	waist	homophonic
+en_2985	I went and saw the Hobbit, it put a Smaug look on my face.	smug	smack	smaug	homophonic
+en_1254	I won't tell you anything about my salivary glands, he said secretively.	secrete	secretively	secretively	homophonic
+en_4031	Well drilling is a deep subject.	deep	deep	deep	homographic
+en_3804	When the creator of Tarzan wrote about Pellucidar and other Earth-core stories, was it Edgar Rice burrows?	Burroughs	burros	burrows	homophonic
+en_6413	I'm a sap for tree jokes.	sap	trey	tree	homophonic
+en_4619	A baseball pitcher asked if he had a good curve ball, but wanted a straight answer.	straight	straight	straight	homographic
+en_3251	There was a lot of equestrian paraphernalia at the bridle shower.	bridal	bridle	bridle	homographic
+en_7757	The fine print is usually a clause for suspicion.	cause	claws	clause	homophonic
+en_4269	Edison thought it would be an illuminating experience.	illuminating	illuminating	illuminating	homographic
+en_5983	The stress of having his beloved pet bunny die caused a man to go bald. He was very upset about losing his hare.	hair	hair	hare	homophonic
+en_7202	For the woman who wore size 13, finding shoes that fit was no small feat.	feet	feet	feat	homophonic
+en_4112	I went to the theatre, it looked a bit suspicious. I reckon the whole thing was staged.	stage	staged	staged	homographic
+en_2508	She was only a Insurance broker's daughter, but all the guys liked her policy.	policy	palace	policy	homophonic
+en_935	Our bikinis are exciting. They are simply the tops.	tops	tops	tops	homographic
+en_8339	When cave men got together they formed clubs.	clubs	clubs	clubs	homographic
+en_1355	I teach at a university, he professed.	professor	professed	professed	homographic
+en_3043	Here is how the track meet is going to run...	run	run	run	homographic
+en_6198	Sign on an electrician's truck: Let us remove your shorts.	shorts	shorts	shorts	homographic
+en_3286	The Keystone Kops were frequently criticized for excessive use of farce.	force	forse	farce	homophonic
+en_6134	The door's ajar, he said openly.	open	openly	openly	homophonic
+en_7196	When crazy glue was invented lots of people became attached to it.	attached	attached	attached	homographic
