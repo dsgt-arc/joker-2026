@@ -1,8 +1,16 @@
 import configparser
 import os
+from pathlib import Path
 
 config = configparser.ConfigParser()
-config.read("../config.ini")
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.ini"
+CONFIG_PATH = Path(os.environ.get("JOKER_CONFIG_PATH", str(DEFAULT_CONFIG_PATH)))
+
+if not config.read(CONFIG_PATH):
+  raise FileNotFoundError(f"Could not read config file at {CONFIG_PATH}")
+
+if 'model' not in config:
+  raise KeyError(f"Missing [model] section in config file at {CONFIG_PATH}")
 
 openai_key = os.environ.get("OPENAI_API_KEY")
 gemini_key = os.environ.get("GEMINI_API_KEY")
@@ -54,6 +62,5 @@ homonym_dir = config['dir']['homonym']
 generate_dir = config['dir']['generate']
 contrastive_baseline_dir = config['dir']['contrastive_baseline']
 contrastive_dir = config['dir']['contrastive']
-
 
 
