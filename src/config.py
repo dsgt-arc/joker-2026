@@ -7,33 +7,33 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.ini"
 CONFIG_PATH = Path(os.environ.get("JOKER_CONFIG_PATH", str(DEFAULT_CONFIG_PATH)))
 
 if not config.read(CONFIG_PATH):
-  raise FileNotFoundError(f"Could not read config file at {CONFIG_PATH}")
+    raise FileNotFoundError(f"Could not read config file at {CONFIG_PATH}")
 
-if 'model' not in config:
-  raise KeyError(f"Missing [model] section in config file at {CONFIG_PATH}")
+for section in ("model", "path", "dir"):
+    if section not in config:
+        raise KeyError(f"Missing [{section}] section in config file at {CONFIG_PATH}")
 
-openai_key = os.environ.get("OPENAI_API_KEY")
-gemini_key = os.environ.get("GEMINI_API_KEY")
-anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
-mistral_key = os.environ.get("MISTRAL_API_KEY")
 openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+if not openrouter_key:
+    raise EnvironmentError("Missing OPENROUTER_API_KEY")
 
-claude = config['model']['claude']
-deepseek = config['model']['deepseek']
-gemini = config['model']['gemini']
-gemini_pro = config['model']['gemini_pro']
-gpt = config['model']['gpt']
-mistral = config['model']['mistral']
-o3 = config['model']['o3']
-o4 = config['model']['o4']
-google = config['model']['google']
-camembert = config['model']['camembert']
-bilingual = config['model']['bilingual']
+# Models
+claude = config["model"]["claude"]
+deepseek = config["model"]["deepseek"]
+gemini = config["model"]["gemini"]
+gemini_pro = config["model"]["gemini_pro"]
+gpt = config["model"]["gpt"]
+mistral = config["model"]["mistral"]
+o3 = config["model"]["o3"]
+o4 = config["model"]["o4"]
+camembert = config["model"]["camembert"]
+bilingual = config["model"]["bilingual"]
+opus = config["model"].get("opus", "")
 
-translation_path = config['path']['translation']
-translation_en_path = config['path']['translation_en']
-translation_fr_path = config['path']['translation_fr']
+# Paths
+translation_path = config["path"]["translation"]
+translation_en_path = config["path"]["translation_en"]
+translation_fr_path = config["path"]["translation_fr"]
 
 location_en_input_path = config["path"]["location_en_input"]
 location_fr_input_path = config["path"]["location_fr_input"]
@@ -48,19 +48,18 @@ combined_fr_path = config["path"]["combined_fr"]
 
 identification_gpt_4o_path = config["path"]["identification_gpt_4o"]
 refinement_gpt_4o_path = config["path"]["refinement_gpt_4o"]
-fasttext_en_path = config['path']['fasttext_en']
-fasttext_fr_path = config['path']['fasttext_fr']
-fasttext_align_en_path = config['path']['fasttext_align_en']
-fasttext_align_fr_path = config['path']['fasttext_align_fr']
+fasttext_en_path = config["path"]["fasttext_en"]
+fasttext_fr_path = config["path"]["fasttext_fr"]
+fasttext_align_en_path = config["path"]["fasttext_align_en"]
+fasttext_align_fr_path = config["path"]["fasttext_align_fr"]
 
-contrastive_path = config['path']['contrastive']
+contrastive_path = config["path"]["contrastive"]
 
-identify_dir = config['dir']['identify']
-translate_dir = config['dir']['translate']
-similarity_dir = config['dir']['similarity']
-homonym_dir = config['dir']['homonym']
-generate_dir = config['dir']['generate']
-contrastive_baseline_dir = config['dir']['contrastive_baseline']
-contrastive_dir = config['dir']['contrastive']
-
-
+# Dirs
+identify_dir = config["dir"]["identify"]
+translate_dir = config["dir"]["translate"]
+similarity_dir = config["dir"]["similarity"]
+homonym_dir = config["dir"]["homonym"]
+generate_dir = config["dir"]["generate"]
+contrastive_baseline_dir = config["dir"]["contrastive_baseline"]
+contrastive_dir = config["dir"]["contrastive"]

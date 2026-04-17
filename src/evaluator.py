@@ -11,6 +11,12 @@ from utils import get_response
 from sentence_transformers import SentenceTransformer, util
 import torch
 
+MODEL_NAME = "BAAI/bge-large-en-v1.5"
+DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+BATCH_SIZE = 32
+
+print("Using device:", DEVICE)
+
 
 def evaluate_pun_location(df):
   y_true = df['manual_location'].str.lower()
@@ -78,43 +84,143 @@ def evaluate_alternative_words(df, prompt_llm):
   print('f1-score:', f1, '\n')
 
 
+def safe_list(x):
+  if isinstance(x, list):
+    return x
+  if isinstance(x, str):
+    try:
+      value = ast.literal_eval(x)
+      return value if isinstance(value, list) else []
+    except (ValueError, SyntaxError):
+      return []
+  return []
+
+
+def encode_list(model, texts):
+  texts = safe_list(texts)
+  if len(texts) == 0:
+    return None
+
+  texts = [f"Represent this sentence for similarity: {t}" for t in texts]
+  return model.encode(
+    texts,
+    batch_size=BATCH_SIZE,
+    convert_to_tensor=True,
+    normalize_embeddings=True,
+  )
+
+
+def pairwise_mean_cos(a, b):
+  if a is None or b is None or len(a) == 0 or len(b) == 0:
+    return np.nan
+  sims = util.cos_sim(a, b)
+  return sims.mean().item()
+
+
+def pairwise_max_cos(a, b):
+  if a is None or b is None or len(a) == 0 or len(b) == 0:
+    return np.nan
+  sims = util.cos_sim(a, b)
+  return sims.max().item()
+
+
+def mean_topk_cos(a, b, k=2):
+  if a is None or b is None or len(a) == 0 or len(b) == 0:
+    return np.nan
+  sims = util.cos_sim(a, b).flatten()
+  k = min(k, sims.numel())
+  topk = torch.topk(sims, k=k).values
+  return topk.mean().item()
+
+
 def evaluate_translations(df):
-  model_name = 'all-MiniLM-L6-v2'
-  model = SentenceTransformer(model_name)
-  combined = []
-  total_problems = []
-  def apply(row):
-    source = [row['pun_word']] + row['first_meaning'] + row['second_meaning']
-    back_translated = [row['pun_word_bt']] + row['first_meaning_bt'] + row['second_meaning_bt']
+  model = SentenceTransformer(MODEL_NAME, device=DEVICE)
 
-    problems = 0
-    source_embeddings = model.encode(source, convert_to_tensor=True)
-    back_translated_embeddings = model.encode(back_translated, convert_to_tensor=True)
-    similarities = []
-    for i in range(len(source_embeddings)):
-      if i < len(source) and i < len(back_translated) and source[i] == back_translated[i]:
-        similarities.append(1)
-      elif i < len(source_embeddings) and i < len(back_translated_embeddings):
-        similarities.append(util.cos_sim(source_embeddings[i], back_translated_embeddings[i]).item())
-      else:
-        problems += 1
-    similarity = sum(similarities) / len(similarities)
+  rows = []
 
-    # print(row['pun_word'], row['pun_word_bt'], similarity)
-    combined.append(similarity)
-    total_problems.append(problems)
+  for _, row in df.iterrows():
+    if row.get('pun_word_bt') == 'ERROR':
+      continue
 
+    first_en = encode_list(model, row['first_meaning'])
+    second_en = encode_list(model, row['second_meaning'])
+    first_bt = encode_list(model, row['first_meaning_bt'])
+    second_bt = encode_list(model, row['second_meaning_bt'])
 
-  df['first_meaning'] = df['first_meaning'].apply(ast.literal_eval)
-  df['second_meaning'] = df['second_meaning'].apply(ast.literal_eval)
-  df['first_meaning_bt'] = df['first_meaning_bt'].apply(ast.literal_eval)
-  df['second_meaning_bt'] = df['second_meaning_bt'].apply(ast.literal_eval)
-  df[['pun_word', 'first_meaning', 'second_meaning', 'pun_word_bt', 'first_meaning_bt', 'second_meaning_bt']].apply(apply, axis=1)
-  print('mean cosine similarity', np.mean(combined))
-  print('variance', np.var(combined))
-  print('top quartile', len([x for x in combined if x > 0.75]), len([x for x in combined if x > 0.75]) / len(df))
-  print('bottom quartile', len([x for x in combined if x < 0.25]), len([x for x in combined if x < 0.25]) / len(df))
-  print('problems', sum(total_problems), sum(total_problems) / len(df))
+    if first_en is None or second_en is None or first_bt is None or second_bt is None:
+      continue
+
+    # Main discrimination scores
+    first_to_first = mean_topk_cos(first_en, first_bt, k=2)
+    first_to_second = mean_topk_cos(first_en, second_bt, k=2)
+    second_to_second = mean_topk_cos(second_en, second_bt, k=2)
+    second_to_first = mean_topk_cos(second_en, first_bt, k=2)
+
+    # Gaps: positive is good
+    first_gap = first_to_first - first_to_second
+    second_gap = second_to_second - second_to_first
+    avg_gap = np.nanmean([first_gap, second_gap])
+
+    # Win indicators
+    first_win = int(first_to_first > first_to_second)
+    second_win = int(second_to_second > second_to_first)
+    row_correct = int(first_win and second_win)
+
+    # Optional within-language separation sanity checks
+    en_sep = mean_topk_cos(first_en, second_en, k=2)
+    bt_sep = mean_topk_cos(first_bt, second_bt, k=2)
+
+    rows.append({
+      'id_en': row.get('id_en', ''),
+      'pun_word': row.get('pun_word', ''),
+      'first_to_first': first_to_first,
+      'first_to_second': first_to_second,
+      'second_to_second': second_to_second,
+      'second_to_first': second_to_first,
+      'first_gap': first_gap,
+      'second_gap': second_gap,
+      'avg_gap': avg_gap,
+      'first_win': first_win,
+      'second_win': second_win,
+      'row_correct': row_correct,
+      'en_separation': en_sep,
+      'bt_separation': bt_sep,
+    })
+
+  result_df = pd.DataFrame(rows)
+
+  if len(result_df) == 0:
+    print('No valid rows to evaluate.')
+    return result_df
+
+  print('row count', len(result_df))
+
+  print('\n--- discrimination accuracy ---')
+  print('first sense win rate', result_df['first_win'].mean())
+  print('second sense win rate', result_df['second_win'].mean())
+  print('row fully correct rate', result_df['row_correct'].mean())
+
+  print('\n--- discrimination gaps (higher is better) ---')
+  print('first gap mean', result_df['first_gap'].mean())
+  print('second gap mean', result_df['second_gap'].mean())
+  print('avg gap mean', result_df['avg_gap'].mean())
+  print('avg gap variance', result_df['avg_gap'].var())
+
+  print('\n--- same-vs-cross similarities ---')
+  print('first->first mean', result_df['first_to_first'].mean())
+  print('first->second mean', result_df['first_to_second'].mean())
+  print('second->second mean', result_df['second_to_second'].mean())
+  print('second->first mean', result_df['second_to_first'].mean())
+
+  print('\n--- separation sanity check ---')
+  print('EN separation mean', result_df['en_separation'].mean())
+  print('BT separation mean', result_df['bt_separation'].mean())
+
+  hard_cases = result_df.sort_values('avg_gap').head(10)
+  print('\n--- hardest rows ---')
+  print(hard_cases[['id_en', 'pun_word', 'first_gap', 'second_gap', 'avg_gap']])
+
+  return result_df
 
 
 def evaluate_generations(df, context_df, eval_model, start=0, end=-1):
@@ -144,7 +250,6 @@ def evaluate_generations(df, context_df, eval_model, start=0, end=-1):
     except ValueError as e:
       print(f'Error: {e}')
       response = '{ "is_pun": "ERROR" }'
-      pass
     return response
 
   chunk_size = 10
@@ -155,6 +260,10 @@ def evaluate_generations(df, context_df, eval_model, start=0, end=-1):
     chunks[i][['is_pun']] = chunks[i].apply(apply, axis=1)
     save(chunks[i], f'{contrastive_dir}baseline/{eval_model}/{model}/{i}.tsv')
 
+
+# =========================
+# MAIN (UNCHANGED)
+# =========================
 
 if __name__ == "__main__":
   task = sys.argv[1]
@@ -171,8 +280,7 @@ if __name__ == "__main__":
     print('row count', len(df))
     evaluate_pun_location(df)
     evaluate_pun_type(df)
-    # evaluate_alternative_words(df, prompt_llm=True
-    
+
   if task == 'translate':
     df = load_all(f'{translate_dir}{model}/')
     save(df, f'{translate_dir}{model}.tsv')
@@ -200,5 +308,3 @@ if __name__ == "__main__":
     save(df, f'{contrastive_dir}baseline/gemini/{model}.tsv')
     print('\neval_model=gemini - row count', len(df))
     print(df['is_pun'].value_counts(normalize=True))
-
-
