@@ -230,6 +230,7 @@ class OpenRouterClient:
             "messages": [
                 {"role": "user", "content": prompt}
             ],
+            "max_tokens": 1500,
         }
 
         if response_schema is not None:
@@ -252,13 +253,24 @@ class OpenRouterClient:
                     json=payload,
                     timeout=timeout,
                 )
+                if response.status_code == 402:
+                    try:
+                        error_details = response.json()
+                        print("--- RAW OPENROUTER 402 ERROR RESPONSE ---")
+                        print(json.dumps(error_details, indent=2))
+                        print("-----------------------------------------")
+                    except json.JSONDecodeError:
+                        print("--- RAW OPENROUTER 402 ERROR (NOT JSON) ---")
+                        print(response.text)
+                        print("-------------------------------------------")
+                
                 response.raise_for_status()
                 data = response.json()
                 return extract_text_from_openrouter_response(data)
             except requests.HTTPError as e:
                 last_error = e
                 status = getattr(e.response, "status_code", None)
-                # Retry transient/rate-limit/server issues.
+                # Do not retry 402, let it fail fast as requested
                 if status in {408, 409, 429, 500, 502, 503, 504} and attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                     continue
