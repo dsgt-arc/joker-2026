@@ -1040,15 +1040,15 @@ async def main():
         await identify_pun_meanings(df, model, start, end)
 
     if task == "translate":
-        df = load_all(f"{identify_dir}gemini/")
-        save(df, f"{identify_dir}gemini.tsv")
+        df = load_all(f"{identify_dir}{model}/")
+        save(df, f"{identify_dir}{model}.tsv")
         await translate_pun_meanings(df, model, start, end, translate_flag)
 
     if task == "lows_similarity":
         llm_verify = "--no-llm" not in sys.argv
-        df = load_all(f"{translate_dir}gemini/")
-        save(df, f"{translate_dir}gemini.tsv")
-        await apply_low_algorithm(df, model, start, end, llm_verify=llm_verify)
+        df = load_all(f"{translate_dir}{model}/")
+        save(df, f"{translate_dir}{model}.tsv")
+        # await apply_low_algorithm(df, model, start, end, llm_verify=llm_verify)
 
     # if task == "similarity":
     #     df = load_all(f"{translate_dir}o4/t/")
