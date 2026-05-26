@@ -611,21 +611,25 @@ def validate_input(df: pd.DataFrame) -> None:
 
 
 def build_semantic_query(row: pd.Series) -> str:
-    """French-only blended launch query for the two meaning domains.
-
-    Retrieval must not use English fields or pun_word_fr.  The two French
-    meaning lists are the only launch domains; pun_word_fr can remain generator
-    context but must not contaminate retrieval search/scoring.
-    """
-    a_terms, b_terms = side_terms(row)
-    parts = a_terms + b_terms
+    parts = [
+        row.get("pun_word_fr", ""),
+        row.get("first_meaning_fr", ""),
+        row.get("second_meaning_fr", ""),
+        row.get("text_clean", ""),
+        row.get("pun_word", ""),
+        row.get("first_meaning", ""),
+        row.get("second_meaning", ""),
+    ]
     return " ".join(clean(p) for p in parts if clean(p))
 
 
 def build_lexical_query(row: pd.Series) -> str:
-    """French-only lexical query over the two meaning domains only."""
-    a_terms, b_terms = side_terms(row)
-    parts = a_terms + b_terms
+    parts = [
+        row.get("pun_word_fr", ""),
+        row.get("pun_word", ""),
+        row.get("first_meaning_fr", ""),
+        row.get("second_meaning_fr", ""),
+    ]
     return " ".join(clean(p) for p in parts if clean(p))
 
 
@@ -2437,10 +2441,8 @@ class RetrievalPipeline:
         lexical_query = build_lexical_query(row)
         semantic_A_query = " ".join(a_terms)
         semantic_B_query = " ".join(b_terms)
-        # Retrieval launch queries are French-domain only.  Do not include
-        # pun_word_fr here; it is generator context, not a retrieval seed.
-        lexical_A_query = " ".join(a_terms)
-        lexical_B_query = " ".join(b_terms)
+        lexical_A_query = " ".join(a_terms + [pun_word_fr])
+        lexical_B_query = " ".join(b_terms + [pun_word_fr])
         mark("setup", t)
 
         t = time.time()
@@ -2467,10 +2469,21 @@ class RetrievalPipeline:
         t = time.time()
         phonetic_A = self.bridge_miner.phonetic_affordances_for_terms(a_terms, "A", top_k_each=PHONETIC_NEIGHBORS_PER_PROBE, max_terms=min(len(a_terms), PHONETIC_PROBE_BEAM))
         phonetic_B = self.bridge_miner.phonetic_affordances_for_terms(b_terms, "B", top_k_each=PHONETIC_NEIGHBORS_PER_PROBE, max_terms=min(len(b_terms), PHONETIC_PROBE_BEAM))
-        # Do not retrieve from pun_word_fr.  It can contaminate the two French
-        # semantic domains, so pun-word phonetic affordances are intentionally
-        # empty in retrieval.
-        phonetic_pun: list[dict[str, Any]] = []
+        phonetic_pun = self.phonetic.search_from_text(pun_word_fr, top_k=PHONETIC_K) if pun_word_fr else []
+        filtered_pun: list[dict[str, Any]] = []
+        seen_pun: set[tuple[str, str]] = set()
+        for r in phonetic_pun:
+            word = clean(r.get("word", ""))
+            if structurally_trivial_variant(pun_word_fr, word) and surface_key(pun_word_fr) != surface_key(word):
+                continue
+            key = phonetic_family_key(word, r.get("ipa", ""))
+            if key in seen_pun:
+                continue
+            seen_pun.add(key)
+            r = dict(r)
+            r["probe_side"] = "pun_word_fr"
+            filtered_pun.append(r)
+        phonetic_pun = collapse_phonetic_records_by_family(filtered_pun, surface_key_name="word", limit=PHONETIC_K)
         mark("phonetic_affordances", t)
 
         t = time.time()
@@ -5666,6 +5679,7 @@ def _compensation_candidates_from_pack_v26(pack: dict[str, Any]) -> list[dict[st
     sources = [
         ("A", pack.get("phonetic_A_candidates", []) or []),
         ("B", pack.get("phonetic_B_candidates", []) or []),
+        ("pun_word", pack.get("phonetic_pun_candidates", []) or []),
     ]
     for side, rows in sources:
         taken = 0
