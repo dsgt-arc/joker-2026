@@ -54,6 +54,12 @@ fasttext_align_en_path = config["path"]["fasttext_align_en"]
 fasttext_align_fr_path = config["path"]["fasttext_align_fr"]
 
 contrastive_path = config["path"]["contrastive"]
+phonetic_phrases_path = config["path"]["phonetic_phrases"]
+
+phonetic_items_path = config["path"]["phonetic_items"]
+phonetic_embeddings_path = config["path"]["phonetic_embeddings"]
+phonetic_index_path = config["path"]["phonetic_index"]
+phonetic_model_path = config["path"]["phonetic_model"]
 
 # Dirs
 identify_dir = config["dir"]["identify"]
@@ -63,3 +69,4 @@ homonym_dir = config["dir"]["homonym"]
 generate_dir = config["dir"]["generate"]
 contrastive_baseline_dir = config["dir"]["contrastive_baseline"]
 contrastive_dir = config["dir"]["contrastive"]
+phonetic_dir = config["dir"]["phonetic"]
