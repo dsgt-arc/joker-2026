@@ -35,6 +35,8 @@ except Exception:
 
 pd.options.mode.chained_assignment = None
 
+DETACHED_DIAGNOSTICS_VERSION = "v18_CLEAN_OUTPUT_FLAG"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Runtime configuration
 # ─────────────────────────────────────────────────────────────────────────────
@@ -65,10 +67,10 @@ PHONETIC_NEIGHBORS_PER_PROBE = int(os.environ.get("RETRIEVAL_PHONETIC_NEIGHBORS_
 MIN_EXPANSION_PHONETIC = float(os.environ.get("RETRIEVAL_MIN_EXPANSION_PHONETIC", "0.60"))
 MIN_OPPOSITE_SEMANTIC = float(os.environ.get("RETRIEVAL_MIN_OPPOSITE_SEMANTIC", "0.38"))
 MAX_EXPANSION_BRIDGES = int(os.environ.get("RETRIEVAL_MAX_EXPANSION_BRIDGES", "24"))
-SIDE_SEMANTIC_K = int(os.environ.get("RETRIEVAL_SIDE_SEMANTIC_K", "14"))
+SIDE_SEMANTIC_K = int(os.environ.get("RETRIEVAL_SIDE_SEMANTIC_K", "28"))
 SIDE_LEVEL2_K = int(os.environ.get("RETRIEVAL_SIDE_LEVEL2_K", "8"))
-MAX_IPA_CANDIDATES_PER_SIDE = int(os.environ.get("RETRIEVAL_MAX_IPA_CANDIDATES_PER_SIDE", "24"))
-MAX_BRIDGES = int(os.environ.get("RETRIEVAL_MAX_BRIDGES", "12"))
+MAX_IPA_CANDIDATES_PER_SIDE = int(os.environ.get("RETRIEVAL_MAX_IPA_CANDIDATES_PER_SIDE", "48"))
+MAX_BRIDGES = int(os.environ.get("RETRIEVAL_MAX_BRIDGES", "8"))
 MAX_IDENTITY_BRIDGE_FRACTION = float(os.environ.get("RETRIEVAL_MAX_IDENTITY_BRIDGE_FRACTION", "0.35"))
 MAX_BRIDGES_PER_SURFACE = int(os.environ.get("RETRIEVAL_MAX_BRIDGES_PER_SURFACE", "2"))
 MIN_PAIR_PHONETIC = float(os.environ.get("RETRIEVAL_MIN_PAIR_PHONETIC", "0.45"))
@@ -80,18 +82,64 @@ STRONG_BRIDGE_THRESHOLD = float(os.environ.get("RETRIEVAL_STRONG_BRIDGE_THRESHOL
 MAX_SEMANTIC_SCORED_EXPANSION_CANDIDATES = int(os.environ.get("RETRIEVAL_MAX_SEMANTIC_SCORED_EXPANSION_CANDIDATES", "40"))
 MAX_CHEAP_EXPANSION_CANDIDATES = int(os.environ.get("RETRIEVAL_MAX_CHEAP_EXPANSION_CANDIDATES", "80"))
 MAX_DIRECT_PAIR_CANDIDATES = int(os.environ.get("RETRIEVAL_MAX_DIRECT_PAIR_CANDIDATES", "40"))
+A1B1_PER_SEED_SEMANTIC_ENABLED = os.environ.get("RETRIEVAL_A1B1_PER_SEED_SEMANTIC", "1") == "1"
+A1B1_PER_SEED_SEMANTIC_K = int(os.environ.get("RETRIEVAL_A1B1_PER_SEED_SEMANTIC_K", "8"))
+A1B1_PER_SEED_LIMIT = int(os.environ.get("RETRIEVAL_A1B1_PER_SEED_LIMIT", "20"))
 LLM_JUDGE_CANDIDATE_LIMIT = int(os.environ.get("RETRIEVAL_LLM_JUDGE_CANDIDATE_LIMIT", "15"))
+
+# Bucketized retrieval regimes. These are stable machine IDs used for
+# ownership, diagnostics, ranking, and export. Display wording must not drive
+# logic. The four regimes are executed independently; no merged A* x B* matrix
+# is used for primary bucketized bridge mining.
+RETRIEVAL_BUCKET_ORDER = [
+    "A0_B0",
+    "A1_B0",
+    "B1_A0",
+    "A1_B1",
+    "A2_B01_DETACHED",
+    "B2_A01_DETACHED",
+]
+RETRIEVAL_BUCKET_REGIMES = [
+    {"bucket_id": "A0_B0", "source_pool": "A0", "target_pool": "B0"},
+    {"bucket_id": "A1_B0", "source_pool": "A1", "target_pool": "B0"},
+    {"bucket_id": "B1_A0", "source_pool": "B1", "target_pool": "A0"},
+    {"bucket_id": "A1_B1", "source_pool": "A1", "target_pool": "B1"},
+]
+RETRIEVAL_BUCKET_LABELS = {
+    "A0_B0": "phonetic_matches(A0, B0)",
+    "A1_B0": "phonetic_matches(A1, B0)",
+    "B1_A0": "phonetic_matches(B1, A0)",
+    "A1_B1": "phonetic_matches(A1, B1)",
+    "A2_B01_DETACHED": "detached_sound_neighbors(B0+B1) as A2",
+    "B2_A01_DETACHED": "detached_sound_neighbors(A0+A1) as B2",
+}
+RETRIEVAL_BUCKET_INDEX = {bucket_id: i for i, bucket_id in enumerate(RETRIEVAL_BUCKET_ORDER)}
 
 
 # JOKER-style affordance ranking: retrieval is a pre-judge, not the final judge.
 # Prioritize phonetic collision + natural French + surprise/recoverability; treat
-# semantic resemblance to the English meanings as a soft bonus, not the objective.
+# semantic resemblance to the French semantic domain meanings as a soft bonus, not the objective.
 MIN_LLM_CANDIDATE_PHONETIC_STRICT = float(os.environ.get("RETRIEVAL_MIN_LLM_CANDIDATE_PHONETIC_STRICT", "0.72"))
 MIN_LLM_CANDIDATE_PHONETIC_BROAD = float(os.environ.get("RETRIEVAL_MIN_LLM_CANDIDATE_PHONETIC_BROAD", "0.80"))
 MIN_LLM_CANDIDATE_NATURALNESS = float(os.environ.get("RETRIEVAL_MIN_LLM_CANDIDATE_NATURALNESS", "0.18"))
 MIN_LLM_CANDIDATE_PIVOTABILITY = float(os.environ.get("RETRIEVAL_MIN_LLM_CANDIDATE_PIVOTABILITY", "0.32"))
-MAX_GENERATOR_AFFORDANCES = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_AFFORDANCES", "12"))
+MAX_GENERATOR_AFFORDANCES = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_AFFORDANCES", "8"))
 MAX_AFFORDANCES_PER_BUCKET = int(os.environ.get("RETRIEVAL_MAX_AFFORDANCES_PER_BUCKET", "4"))
+
+# Detached recovery buckets. These always run after the existing bucketized and
+# expansion routes. They keep exactly one semantic anchor side and generate the
+# other side from broad phonetic neighbors, with no semantic check to the missing
+# original domain. The goal is recall through new collision territory, not looser
+# junk filtering.
+DETACHED_BUCKETS_ENABLED = os.environ.get("RETRIEVAL_DETACHED_BUCKETS", "1") == "1"
+DETACHED_NEIGHBORS_PER_ANCHOR = int(os.environ.get("RETRIEVAL_DETACHED_NEIGHBORS_PER_ANCHOR", "32"))
+DETACHED_MIN_PHONETIC = float(os.environ.get("RETRIEVAL_DETACHED_MIN_PHONETIC", "0.80"))
+DETACHED_MAX_ANCHOR_SEMANTIC_SIM = float(os.environ.get("RETRIEVAL_DETACHED_MAX_ANCHOR_SEMANTIC_SIM", "0.75"))
+DETACHED_MIN_NATURALNESS = float(os.environ.get("RETRIEVAL_DETACHED_MIN_NATURALNESS", str(MIN_LLM_CANDIDATE_NATURALNESS)))
+DETACHED_MIN_FREE_RECOGNIZABILITY = float(os.environ.get("RETRIEVAL_DETACHED_MIN_FREE_RECOGNIZABILITY", "0.32"))
+DETACHED_MAX_PER_ANCHOR = int(os.environ.get("RETRIEVAL_DETACHED_MAX_PER_ANCHOR", "3"))
+DETACHED_MAX_PER_BUCKET = int(os.environ.get("RETRIEVAL_DETACHED_MAX_PER_BUCKET", "24"))
+PREFINAL_BRIDGE_CANDIDATE_LIMIT = int(os.environ.get("RETRIEVAL_PREFINAL_BRIDGE_CANDIDATE_LIMIT", "80"))
 
 
 # Fast bridge mining mode for LLM-judge pipeline.  Retrieval should produce
@@ -110,6 +158,7 @@ CROSS_SIDE_COLLISION_BONUS = float(os.environ.get("RETRIEVAL_CROSS_SIDE_COLLISIO
 MAX_BRIDGES_PER_ROOT = int(os.environ.get("RETRIEVAL_MAX_BRIDGES_PER_ROOT", "2"))
 
 RETRIEVAL_DEBUG_PACKS = os.environ.get("RETRIEVAL_DEBUG_PACKS", "0") == "1"
+RETRIEVAL_OUTPUT_DEBUG = os.environ.get("RETRIEVAL_OUTPUT_DEBUG", "0") == "1"
 RETRIEVAL_SAVE_TRACES = os.environ.get("RETRIEVAL_SAVE_TRACES", "0") == "1"
 USE_SPACY_LEMMAS = os.environ.get("RETRIEVAL_USE_SPACY_LEMMAS", "1") == "1"
 SPACY_MODEL = os.environ.get("RETRIEVAL_SPACY_MODEL", "fr_core_news_md")
@@ -120,23 +169,17 @@ _SPACY_WARNED = False
 # deterministic word-level semantic drift beam for Low-style bridge mining.
 # Important: FastText is intentionally NOT recursive. It expands selected seed
 # terms once, with strict budgets, so runtime is predictable.
-USE_FASTTEXT = os.environ.get("RETRIEVAL_USE_FASTTEXT", "1") == "1"
+USE_FASTTEXT = os.environ.get("RETRIEVAL_USE_FASTTEXT", "0") == "1"
 FASTTEXT_MODEL_PATH = os.environ.get("RETRIEVAL_FASTTEXT_MODEL", fasttext_fr_path)
-FASTTEXT_K = int(os.environ.get("RETRIEVAL_FASTTEXT_K", "6"))
-FASTTEXT_SEED_LIMIT = int(os.environ.get("RETRIEVAL_FASTTEXT_SEED_LIMIT", "5"))
+FASTTEXT_K = int(os.environ.get("RETRIEVAL_FASTTEXT_K", "12"))
+FASTTEXT_SEED_LIMIT = int(os.environ.get("RETRIEVAL_FASTTEXT_SEED_LIMIT", "10"))
 FASTTEXT_MIN_SIM = float(os.environ.get("RETRIEVAL_FASTTEXT_MIN_SIM", "0.45"))
 FASTTEXT_LEVEL1_PENALTY = float(os.environ.get("RETRIEVAL_FASTTEXT_LEVEL1_PENALTY", "0.86"))
-FASTTEXT_MAX_CANDIDATES_PER_SIDE = int(os.environ.get("RETRIEVAL_FASTTEXT_MAX_CANDIDATES_PER_SIDE", "24"))
+FASTTEXT_MAX_CANDIDATES_PER_SIDE = int(os.environ.get("RETRIEVAL_FASTTEXT_MAX_CANDIDATES_PER_SIDE", "48"))
 FASTTEXT_MAX_TOKENS_PER_SEED = int(os.environ.get("RETRIEVAL_FASTTEXT_MAX_TOKENS_PER_SEED", "2"))
 _FASTTEXT_WARNED = False
 
 REQUIRED_COLUMNS = [
-    "text_clean",
-    "pun_word",
-    "pun_type",
-    "first_meaning",
-    "second_meaning",
-    "pun_word_fr",
     "first_meaning_fr",
     "second_meaning_fr",
 ]
@@ -194,16 +237,22 @@ def short(x: Any, n: int = 500) -> str:
     return clean(x)[:n]
 
 
-def norm_text(x: Any) -> str:
-    text = clean(x).lower()
+@lru_cache(maxsize=500_000)
+def _norm_text_cached(text: str) -> str:
+    text = text.lower()
     text = text.replace("’", "'").replace("ʼ", "'")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
+def norm_text(x: Any) -> str:
+    return _norm_text_cached(clean(x))
+
+
+@lru_cache(maxsize=500_000)
 def strip_accents(text: str) -> str:
     return "".join(
-        ch for ch in unicodedata.normalize("NFD", text)
+        ch for ch in unicodedata.normalize("NFD", str(text))
         if unicodedata.category(ch) != "Mn"
     )
 
@@ -499,6 +548,127 @@ def bridge_surface_pair(b: dict[str, Any]) -> tuple[str, str]:
     return left, right
 
 
+def bridge_ipa_pair(b: dict[str, Any]) -> tuple[str, str]:
+    """Stable IPA pair for direct and expansion bridges."""
+    left_ipa = clean(
+        b.get("left_ipa")
+        or b.get("a_ipa")
+        or b.get("sound_source_ipa")
+        or b.get("source_ipa")
+        or ""
+    )
+    right_ipa = clean(
+        b.get("right_ipa")
+        or b.get("b_ipa")
+        or b.get("candidate_ipa")
+        or ""
+    )
+    return left_ipa, right_ipa
+
+
+def retrieval_pair_key_for_bridge(b: dict[str, Any]) -> str:
+    """Order-insensitive bridge identity for first-bucket ownership."""
+    left, right = bridge_surface_pair(b)
+    left_ipa, right_ipa = bridge_ipa_pair(b)
+    side1 = (surface_key(left), left_ipa)
+    side2 = (surface_key(right), right_ipa)
+    return json.dumps(sorted([side1, side2]), ensure_ascii=False, separators=(",", ":"))
+
+
+def retrieval_pool_member_key(surface: Any, ipa: Any) -> tuple[str, str]:
+    """Exact-ish pool membership key for bucketizing expansion bridges.
+
+    Expansion bucket ownership must be based on whether the generated phonetic
+    neighbor is actually present in one of the explicit A0/B0/A1/B1 pools.
+    Surface alone can be ambiguous, and IPA alone is too broad, so use both.
+    """
+    return (surface_key(surface), clean(ipa))
+
+
+def retrieval_pool_index(pool_map: dict[str, list[dict[str, Any]]]) -> dict[str, set[tuple[str, str]]]:
+    index: dict[str, set[tuple[str, str]]] = {}
+    for pool_name, items in (pool_map or {}).items():
+        keys: set[tuple[str, str]] = set()
+        for item in items or []:
+            surface = clean(item.get("surface", item.get("word", item.get("text", ""))))
+            ipa = clean(item.get("ipa", item.get("candidate_ipa", "")))
+            key = retrieval_pool_member_key(surface, ipa)
+            if key[0] and key[1]:
+                keys.add(key)
+        index[pool_name] = keys
+    return index
+
+
+def retrieval_bucket_for_pool_pair(pool_a: str, pool_b: str) -> str:
+    """Return the bucket ID for an unordered explicit pool pair, or ''."""
+    pair = frozenset([clean(pool_a), clean(pool_b)])
+    if pair == frozenset(["A0", "B0"]):
+        return "A0_B0"
+    if pair == frozenset(["A1", "B0"]):
+        return "A1_B0"
+    if pair == frozenset(["B1", "A0"]):
+        return "B1_A0"
+    if pair == frozenset(["A1", "B1"]):
+        return "A1_B1"
+    return ""
+
+
+def bucket_rank_sort_key(b: dict[str, Any]) -> tuple:
+    return (
+        affordance_stage_rank(b.get("affordance_stage", ""), b.get("bridge_type", "")),
+        -float(b.get("llm_priority_score", b.get("bridge_score", 0.0)) or 0.0),
+        -float(b.get("phonetic_score", 0.0) or 0.0),
+        surface_key(bridge_surface_pair(b)[0]),
+        surface_key(bridge_surface_pair(b)[1]),
+    )
+
+
+def retrieval_bucket_counts(bridges: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {bucket_id: 0 for bucket_id in RETRIEVAL_BUCKET_ORDER}
+    for b in bridges or []:
+        bucket_id = clean(b.get("retrieval_bucket", ""))
+        if bucket_id in counts:
+            counts[bucket_id] += 1
+    return counts
+
+
+def order_bridges_by_retrieval_bucket(bridges: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {bucket_id: [] for bucket_id in RETRIEVAL_BUCKET_ORDER}
+    extras: list[dict[str, Any]] = []
+    for b in bridges or []:
+        bucket_id = clean(b.get("retrieval_bucket", ""))
+        if bucket_id in grouped:
+            grouped[bucket_id].append(b)
+        else:
+            extras.append(b)
+
+    out: list[dict[str, Any]] = []
+    for bucket_id in RETRIEVAL_BUCKET_ORDER:
+        bucket_items = sorted(grouped[bucket_id], key=bucket_rank_sort_key)
+        for rank, item in enumerate(bucket_items, 1):
+            nb = dict(item)
+            nb["retrieval_bucket"] = bucket_id
+            nb["retrieval_bucket_rank"] = int(nb.get("retrieval_bucket_rank", rank) or rank)
+            nb["retrieval_pair_key"] = nb.get("retrieval_pair_key") or retrieval_pair_key_for_bridge(nb)
+            out.append(nb)
+            if limit is not None and len(out) >= limit:
+                return out
+    for item in sorted(extras, key=bucket_rank_sort_key):
+        out.append(item)
+        if limit is not None and len(out) >= limit:
+            return out
+    return out
+
+
+def group_exported_affordances_by_retrieval_bucket(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {bucket_id: [] for bucket_id in RETRIEVAL_BUCKET_ORDER}
+    for item in items or []:
+        bucket_id = clean(item.get("retrieval_bucket", ""))
+        if bucket_id in grouped:
+            grouped[bucket_id].append(item)
+    return grouped
+
+
 def collapse_dicts_by_root(
     items: list[dict[str, Any]],
     surface_key_name: str = "surface",
@@ -610,31 +780,83 @@ def validate_input(df: pd.DataFrame) -> None:
         raise ValueError("Missing required columns: " + ", ".join(missing))
 
 
+def side_terms(row: pd.Series) -> tuple[list[str], list[str]]:
+    return parse_listish(row.get("first_meaning_fr", [])), parse_listish(row.get("second_meaning_fr", []))
+
+
 def build_semantic_query(row: pd.Series) -> str:
-    parts = [
-        row.get("pun_word_fr", ""),
-        row.get("first_meaning_fr", ""),
-        row.get("second_meaning_fr", ""),
-        row.get("text_clean", ""),
-        row.get("pun_word", ""),
-        row.get("first_meaning", ""),
-        row.get("second_meaning", ""),
-    ]
-    return " ".join(clean(p) for p in parts if clean(p))
+    a_terms, b_terms = side_terms(row)
+    return " ".join(unique_keep_order(a_terms + b_terms))
 
 
 def build_lexical_query(row: pd.Series) -> str:
-    parts = [
-        row.get("pun_word_fr", ""),
-        row.get("pun_word", ""),
-        row.get("first_meaning_fr", ""),
-        row.get("second_meaning_fr", ""),
-    ]
-    return " ".join(clean(p) for p in parts if clean(p))
+    a_terms, b_terms = side_terms(row)
+    return " ".join(unique_keep_order(a_terms + b_terms))
 
 
-def side_terms(row: pd.Series) -> tuple[list[str], list[str]]:
-    return parse_listish(row.get("first_meaning_fr", [])), parse_listish(row.get("second_meaning_fr", []))
+def semantic_side_channel(term: str, side: str) -> str:
+    """Stable semantic-cache channel for one French launch term."""
+    key = surface_key(term) or norm_text(term)
+    return f"semantic_{side}_term:{key}"
+
+
+def semantic_side_requests(terms: list[str], side: str, top_k: int = SEMANTIC_K) -> list[tuple[str, int, str]]:
+    """Build one semantic request per French list item.
+
+    Retrieval launches from the two French semantic-domain lists only.  The
+    non-list source columns are not retrieval inputs.  Channels are term-stable
+    so row-range prewarm and retrieve_row hit the same semantic-search cache.
+    """
+    requests: list[tuple[str, int, str]] = []
+    seen: set[str] = set()
+    for term in unique_keep_order(terms):
+        t = clean(term)
+        if not t:
+            continue
+        channel = semantic_side_channel(t, side)
+        if channel in seen:
+            continue
+        seen.add(channel)
+        requests.append((t, top_k, channel))
+    return requests
+
+
+def unique_keep_order_dicts_by_surface(items: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    """Keep first dict per normalized surface, preserving generator/export shape."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for item in items or []:
+        surface = clean(item.get("surface", item.get("text", "")))
+        key = surface_key(surface) or norm_text(surface)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(dict(item))
+        if limit is not None and len(out) >= limit:
+            break
+    return out
+
+
+def merge_semantic_side_results(
+    semantic_many: dict[str, list[dict[str, Any]]],
+    channels: list[str],
+) -> list[dict[str, Any]]:
+    """Merge per-term semantic results by surface, keeping the best metadata."""
+    best: dict[str, dict[str, Any]] = {}
+    for channel in channels:
+        for item in semantic_many.get(channel, []) or []:
+            surface = clean(item.get("surface", item.get("text", "")))
+            if not surface or lexically_bad_candidate_surface(surface):
+                continue
+            key = surface_key(surface) or norm_text(surface)
+            current = best.get(key)
+            candidate = dict(item)
+            candidate["semantic_launch_channel"] = channel
+            if current is None or float(candidate.get("score", 0.0) or 0.0) > float(current.get("score", 0.0) or 0.0):
+                best[key] = candidate
+    out = list(best.values())
+    out.sort(key=lambda x: float(x.get("score", 0.0) or 0.0), reverse=True)
+    return out
 
 
 
@@ -691,88 +913,9 @@ def surface_recognizability_prior(surface: Any) -> float:
 
 
 
-def surface_naturalness_score(surface: Any) -> float:
-    """Generator-facing natural French prior for a candidate surface.
-
-    This is deliberately separate from semantic quality: it measures whether the
-    visible French surface is likely to be ordinary/recognizable enough to offer
-    to the generator. It reuses the existing recognizability and pivotability
-    heuristics instead of introducing a new model call.
-    """
-    return clamp01(max(surface_recognizability_prior(surface), surface_pivotability(surface)))
-
-def surface_pivotability(surface: Any) -> float:
-    """Cheap estimate of whether a surface can carry a native French pun pivot.
-
-    This is intentionally heuristic and model-free.  It rewards words/short
-    phrases that can plausibly anchor a sentence or reinterpretation, and
-    penalizes support/function forms that are phonetic-only accidents.
-    """
-    s = norm_text(surface)
-    plain = strip_accents(s)
-    if not s or lexically_bad_candidate_surface(s):
-        return 0.0
-    if s in _BAD_LOW_VALUE_PUN_PIVOTS or plain in {strip_accents(x) for x in _BAD_LOW_VALUE_PUN_PIVOTS}:
-        return 0.0
-
-    words = s.split()
-    wc = len(words)
-    score = 0.0
-
-    if s in _COMMON_FRENCH_PUN_PIVOTS or plain in {strip_accents(x) for x in _COMMON_FRENCH_PUN_PIVOTS}:
-        score += 0.42
-    elif re.fullmatch(r"[a-zàâçéèêëîïôûùüÿñæœ'-]{4,10}", s, flags=re.I):
-        score += 0.24
-    elif re.fullmatch(r"[a-zàâçéèêëîïôûùüÿñæœ'-]{3}", s, flags=re.I):
-        score += 0.10
-
-    if 2 <= wc <= 4:
-        # Short phrases can be excellent French puns, but only if they are not
-        # just preposition/determiner padding around a weak pivot.
-        score += 0.20
-        if any(w in _LOW_PIVOT_FUNCTION_SURFACES for w in words):
-            score -= 0.08
-
-    if s in _LOW_PIVOT_FUNCTION_SURFACES or plain in {strip_accents(x) for x in _LOW_PIVOT_FUNCTION_SURFACES}:
-        score -= 0.26
-
-    if plain.endswith(_HIGH_PIVOT_NOUNISH_SUFFIXES):
-        score += 0.08
-
-    # Very short fragments and internet-English fragments rarely carry the joke.
-    if len(plain) <= 3 and s not in _COMMON_FRENCH_PUN_PIVOTS:
-        score -= 0.18
-    if plain in {"fab", "lol", "ok"}:
-        score -= 0.4
-
-    return clamp01(score)
 
 
-def bridge_pivotability_score(b: dict[str, Any]) -> float:
-    left, right = bridge_surface_pair(b)
-    sound_source = clean(b.get("sound_source", b.get("source_surface", left)))
-    candidate = clean(b.get("candidate", b.get("candidate_surface", right)))
-    surfaces = [x for x in [left, right, sound_source, candidate] if clean(x)]
-    if not surfaces:
-        return 0.0
 
-    candidate_score = surface_pivotability(candidate or right)
-    other_score = max(surface_pivotability(x) for x in surfaces)
-    score = 0.65 * candidate_score + 0.35 * other_score
-
-    # Exact homophone is valuable, but it does not rescue a non-pivot.
-    phon = clamp01(b.get("phonetic_score", 0.0))
-    if phon >= 0.96:
-        score += 0.08
-    elif phon >= 0.82:
-        score += 0.03
-
-    # Penalize cases where the sound source is merely a support/function word.
-    src = norm_text(sound_source)
-    if src in _LOW_PIVOT_FUNCTION_SURFACES or strip_accents(src) in {strip_accents(x) for x in _LOW_PIVOT_FUNCTION_SURFACES}:
-        score -= 0.18
-
-    return clamp01(score)
 
 
 def expression_quality(item: dict[str, Any]) -> float:
@@ -1843,6 +1986,616 @@ class BridgeMiner:
 
         return self._finalize_side_candidates(candidates)
 
+    def expand_bucketized_side_from_precomputed(
+        self,
+        terms: list[str],
+        side: str,
+        semantic_results: list[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
+        """Build explicit original and expanded pools for bucketized mining.
+
+        A0/B0 are only original French list seeds with known IPA. A1/B1 are
+        semantic-near candidates, including the bounded FastText beam, with known
+        IPA. The pools are finalized independently so primary bucket regimes can
+        be executed as separate vectorized pairwise searches.
+        """
+        seeds = unique_keep_order(terms, limit=20)
+        seed_nodes = self._seed_candidates(seeds, side)
+
+        if semantic_results is not None:
+            level1 = self._semantic_result_nodes(semantic_results or [], side=side, level=1, limit=SIDE_SEMANTIC_K)
+        else:
+            q1 = " ".join(seeds)
+            level1 = self._semantic_candidates(q1, side=side, level=1, top_k=SIDE_SEMANTIC_K) if q1 else []
+
+        # Widen A1/B1 at the source. Row-level semantic results are often
+        # dominated by the blended domain query, so each original seed also gets
+        # its own bounded semantic query. This broadens buckets 2-4 and also
+        # gives detached buckets 5-6 more anchors, without loosening final junk
+        # filters.
+        per_seed_level1: list[dict[str, Any]] = []
+        if A1B1_PER_SEED_SEMANTIC_ENABLED:
+            for seed in unique_keep_order(seeds, limit=A1B1_PER_SEED_LIMIT):
+                per_seed_level1.extend(
+                    self._semantic_candidates(
+                        seed,
+                        side=side,
+                        level=1,
+                        top_k=A1B1_PER_SEED_SEMANTIC_K,
+                    )
+                )
+
+        level1 = level1 + per_seed_level1
+
+        ft_level1: list[dict[str, Any]] = []
+        if self.fasttext is not None and self.fasttext.enabled:
+            bge_seed_terms = unique_keep_order([x["surface"] for x in level1[:16]], limit=16)
+            ft_seed_pool = unique_keep_order(seeds + bge_seed_terms, limit=FASTTEXT_SEED_LIMIT)
+            ft_level1 = self.fasttext.expand(
+                ft_seed_pool,
+                side=side,
+                level=1,
+                limit=FASTTEXT_MAX_CANDIDATES_PER_SIDE,
+            )
+
+        expanded_nodes = level1 + ft_level1
+        all_nodes = seed_nodes + expanded_nodes
+
+        semantic_all, ipa_all = self._finalize_side_candidates(all_nodes)
+        _, ipa_0 = self._finalize_side_candidates(seed_nodes)
+        _, ipa_1 = self._finalize_side_candidates(expanded_nodes)
+
+        pool0_name = f"{side}0"
+        pool1_name = f"{side}1"
+        for item in ipa_0:
+            item["retrieval_pool"] = pool0_name
+        for item in ipa_1:
+            item["retrieval_pool"] = pool1_name
+
+        return {
+            "semantic_candidates": semantic_all,
+            "with_ipa": ipa_all,
+            pool0_name: ipa_0,
+            pool1_name: ipa_1,
+        }
+
+    def _build_bucket_bridge(
+        self,
+        bucket_id: str,
+        source_pool: str,
+        target_pool: str,
+        source_item: dict[str, Any],
+        target_item: dict[str, Any],
+        phon: float,
+    ) -> dict[str, Any]:
+        source_side = "A" if source_pool.startswith("A") else "B"
+        target_side = "A" if target_pool.startswith("A") else "B"
+        bridge_type = bridge_type_for_pair(source_item, target_item, phon)
+
+        source_semantic_score = float(source_item.get("semantic_score", 0.0) or 0.0)
+        target_semantic_score = float(target_item.get("semantic_score", 0.0) or 0.0)
+        semantic_A_score = source_semantic_score if source_side == "A" else target_semantic_score
+        semantic_B_score = source_semantic_score if source_side == "B" else target_semantic_score
+        quality = (float(source_item.get("quality_score", 0.0) or 0.0) + float(target_item.get("quality_score", 0.0) or 0.0)) / 2.0
+        level = max(int(source_item.get("level", 9) or 9), int(target_item.get("level", 9) or 9))
+        level_bonus = {0: 1.0, 1: 0.88, 2: 0.74}.get(level, 0.60)
+        type_bonus = bridge_type_bonus(bridge_type, semantic_A_score, semantic_B_score)
+        cross_semantic_score = min(semantic_A_score, semantic_B_score)
+        novelty = lexical_novelty_bonus(source_item["surface"], target_item["surface"])
+        common_bonus = (commonness_bonus_from_item(source_item) + commonness_bonus_from_item(target_item)) / 2.0
+        cross_side_bonus = CROSS_SIDE_COLLISION_BONUS if (not same_root(source_item["surface"], target_item["surface"]) and phon >= 0.72) else 0.0
+        naturalness = quality
+        same_root_flag = (
+            same_root(source_item["surface"], target_item["surface"])
+            or structurally_trivial_variant(source_item["surface"], target_item["surface"])
+            or boring_morphophonetic_echo(source_item["surface"], target_item["surface"])
+        )
+        surprise = humor_surprise_score(phon, semantic_A_score, semantic_B_score, same_root_flag)
+        bridge_score = (
+            0.40 * phon
+            + 0.13 * naturalness
+            + 0.13 * surprise
+            + 0.10 * min(semantic_A_score, semantic_B_score)
+            + 0.04 * level_bonus
+            + type_bonus
+            + novelty
+            + common_bonus
+            + cross_side_bonus
+        )
+
+        bdict = {
+            "left_side": source_side,
+            "right_side": target_side,
+            "left_text": source_item["surface"],
+            "right_text": target_item["surface"],
+            "left_ipa": source_item["ipa"],
+            "right_ipa": target_item["ipa"],
+            "left_source": source_item.get("source", ""),
+            "right_source": target_item.get("source", ""),
+            "left_level": int(source_item.get("level", -1) or -1),
+            "right_level": int(target_item.get("level", -1) or -1),
+            "phonetic_score": float(phon),
+            "semantic_A_score": float(semantic_A_score),
+            "semantic_B_score": float(semantic_B_score),
+            "cross_semantic_score": float(cross_semantic_score),
+            "quality_score": float(quality),
+            "type_bonus": float(type_bonus),
+            "bridge_score": float(bridge_score),
+            "lexical_novelty_bonus": float(novelty),
+            "commonness_bonus": float(common_bonus),
+            "cross_side_collision_bonus": float(cross_side_bonus),
+            "semantic_verified": True,
+            "semantic_relation": "direct_bucketized_cross_side_semantic",
+            "affordance_stage": f"bucket_{bucket_id}_{source_pool}_{target_pool}",
+            "phonetic_relation": phonetic_relation_label(float(phon), same_ipa=clean(source_item.get("ipa", "")) == clean(target_item.get("ipa", ""))),
+            "naturalness_score": float(naturalness),
+            "surprise_score": float(surprise),
+            "same_root_penalty_applied": bool(same_root_flag),
+            "bridge_type": bridge_type,
+            "relation": bridge_type,
+            "retrieval_bucket": bucket_id,
+            "retrieval_bucket_label": RETRIEVAL_BUCKET_LABELS.get(bucket_id, bucket_id),
+            "retrieval_source_pool": source_pool,
+            "retrieval_target_pool": target_pool,
+        }
+        bdict["llm_priority_score"] = llm_priority_score_for_bridge(bdict)
+        bdict["retrieval_pair_key"] = retrieval_pair_key_for_bridge(bdict)
+        return bdict
+
+    def _run_bucket_pairwise(
+        self,
+        bucket_id: str,
+        source_pool: str,
+        target_pool: str,
+        source_items: list[dict[str, Any]],
+        target_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Run one explicit bucket regime using vectorized phonetic scoring."""
+        if not source_items or not target_items:
+            return []
+        sim = self._pairwise_phonetic(source_items, target_items)
+        if not sim.size:
+            return []
+
+        source_bad = np.array([lexically_bad_candidate_surface(x.get("surface", "")) for x in source_items], dtype=bool)
+        target_bad = np.array([lexically_bad_candidate_surface(x.get("surface", "")) for x in target_items], dtype=bool)
+        valid_mask = sim >= MIN_PAIR_PHONETIC
+        if source_bad.any():
+            valid_mask[source_bad, :] = False
+        if target_bad.any():
+            valid_mask[:, target_bad] = False
+
+        coords = np.argwhere(valid_mask)
+        if not coords.size:
+            return []
+
+        phon_vals = sim[coords[:, 0], coords[:, 1]].astype(float)
+        source_sem_vals = np.array([float(source_items[int(i)].get("semantic_score", 0.0) or 0.0) for i in coords[:, 0]], dtype=float)
+        target_sem_vals = np.array([float(target_items[int(j)].get("semantic_score", 0.0) or 0.0) for j in coords[:, 1]], dtype=float)
+        quality_vals = np.array([
+            (float(source_items[int(i)].get("quality_score", 0.0) or 0.0) + float(target_items[int(j)].get("quality_score", 0.0) or 0.0)) / 2.0
+            for i, j in coords
+        ], dtype=float)
+        cheap_vals = 0.42 * phon_vals + 0.20 * source_sem_vals + 0.20 * target_sem_vals + 0.08 * quality_vals
+        if len(cheap_vals) > MAX_DIRECT_PAIR_CANDIDATES * 4:
+            keep_idx = np.argpartition(-cheap_vals, MAX_DIRECT_PAIR_CANDIDATES * 4 - 1)[:MAX_DIRECT_PAIR_CANDIDATES * 4]
+            coords = coords[keep_idx]
+            phon_vals = phon_vals[keep_idx]
+            cheap_vals = cheap_vals[keep_idx]
+
+        candidates: list[tuple[float, int, int, float]] = []
+        for (i, j), phon, cheap_base in zip(coords, phon_vals, cheap_vals):
+            i = int(i)
+            j = int(j)
+            source_item = source_items[i]
+            target_item = target_items[j]
+            if structurally_trivial_variant(source_item.get("surface", ""), target_item.get("surface", "")) or boring_morphophonetic_echo(source_item.get("surface", ""), target_item.get("surface", "")):
+                continue
+            novelty = lexical_novelty_bonus(source_item["surface"], target_item["surface"])
+            candidates.append((float(cheap_base) + novelty, i, j, float(phon)))
+
+        candidates.sort(reverse=True, key=lambda x: x[0])
+        bridges = [
+            self._build_bucket_bridge(bucket_id, source_pool, target_pool, source_items[i], target_items[j], phon)
+            for _, i, j, phon in candidates[:MAX_DIRECT_PAIR_CANDIDATES]
+        ]
+        bridges.sort(key=bucket_rank_sort_key)
+        for rank, bridge in enumerate(bridges, 1):
+            bridge["retrieval_bucket_rank"] = rank
+        return bridges
+
+
+    def _dedupe_anchor_items(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep one anchor per surface+IPA while preserving pool provenance.
+
+        Detached buckets combine original and expanded anchors (B0+B1 or A0+A1).
+        Original anchors should be retained before expanded duplicates because they
+        are more recoverable for generation.
+        """
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in items or []:
+            surface = clean(item.get("surface", item.get("text", item.get("word", ""))))
+            ipa = clean(item.get("ipa", item.get("candidate_ipa", "")))
+            if not surface or not ipa:
+                continue
+            key = retrieval_pool_member_key(surface, ipa)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
+
+    def _detached_score_for_bridge(self, b: dict[str, Any]) -> float:
+        """Rank detached candidates without requiring missing-side semantics."""
+        phon = clamp01(b.get("phonetic_score", 0.0))
+        natural = clamp01(b.get("naturalness_score", b.get("quality_score", 0.0)))
+        recognizability = max(
+            surface_recognizability_prior(b.get("detached_free_surface", "")),
+            surface_recognizability_prior(b.get("detached_anchor_surface", "")),
+        )
+        semantic_distance = clamp01(b.get("detached_semantic_distance_from_anchor", 0.0))
+        anchor_quality = clamp01(b.get("detached_anchor_quality", 0.0))
+        # Small bonus for ordinary different-root lexical collisions. This should
+        # never rescue a same-family candidate because those are hard-rejected.
+        novelty = max(0.0, float(b.get("lexical_novelty_bonus", 0.0) or 0.0))
+        return clamp01(
+            0.45 * phon
+            + 0.20 * natural
+            + 0.15 * recognizability
+            + 0.10 * semantic_distance
+            + 0.05 * anchor_quality
+            + 0.05 * novelty
+        )
+
+    def _detached_sound_collision_bridges(
+        self,
+        anchor_items: list[dict[str, Any]],
+        anchor_pool_label: str,
+        free_pool_label: str,
+        bucket_id: str,
+        anchor_side: str,
+        free_side: str,
+    ) -> list[dict[str, Any]]:
+        """Generate one-anchor detached sound-collision bridges.
+
+        This is intentionally not a normal pairwise bucket.  The anchor side is
+        semantically meaningful (A0+A1 or B0+B1).  The free side is a clean French
+        phonetic neighbor of that anchor.  There is no semantic check to the
+        missing original domain; the LLM judge must decide whether the free word
+        can be made useful.
+        """
+        anchors = self._dedupe_anchor_items(anchor_items)
+        stats: dict[str, Any] = {
+            "bucket_id": bucket_id,
+            "anchor_pool_label": anchor_pool_label,
+            "free_pool_label": free_pool_label,
+            "anchors_input": int(len(anchor_items or [])),
+            "anchors_after_dedupe": int(len(anchors)),
+            "anchor_ipas_queried": 0,
+            "anchors_missing_surface_or_ipa": 0,
+            "anchors_with_neighbors": 0,
+            "neighbors_seen": 0,
+            "candidates_before_semantic_distance": 0,
+            "semantic_distance_scored": 0,
+            "accepted_before_anchor_cap": 0,
+            "accepted_after_anchor_cap": 0,
+            "returned_after_bucket_cap": 0,
+            "rejections": {},
+        }
+
+        def reject(reason: str, n: int = 1) -> None:
+            rejections = stats.setdefault("rejections", {})
+            rejections[reason] = int(rejections.get(reason, 0)) + int(n)
+
+        if not anchors:
+            stats["rejections"]["no_anchors"] = 1
+            self._detached_diagnostics.append(stats)
+            return []
+
+        anchor_ipas = [clean(x.get("ipa", "")) for x in anchors if clean(x.get("ipa", ""))]
+        stats["anchor_ipas_queried"] = int(len(anchor_ipas))
+        neighbors_by_ipa = self.phonetic.search_many(anchor_ipas, top_k=DETACHED_NEIGHBORS_PER_ANCHOR)
+
+        raw: list[dict[str, Any]] = []
+        # Batch semantic-distance requests per anchor.  This checks only that the
+        # free word is not merely the same meaning/family as the anchor; it is not
+        # a semantic check to the opposite original domain.
+        for anchor in anchors:
+            anchor_surface = clean(anchor.get("surface", anchor.get("text", anchor.get("word", ""))))
+            anchor_ipa = clean(anchor.get("ipa", ""))
+            if not anchor_surface or not anchor_ipa:
+                stats["anchors_missing_surface_or_ipa"] = int(stats.get("anchors_missing_surface_or_ipa", 0)) + 1
+                continue
+            anchor_pool_actual = clean(anchor.get("retrieval_pool", "")) or anchor_pool_label
+            neighbors = neighbors_by_ipa.get(anchor_ipa, []) or []
+            if neighbors:
+                stats["anchors_with_neighbors"] = int(stats.get("anchors_with_neighbors", 0)) + 1
+            stats["neighbors_seen"] = int(stats.get("neighbors_seen", 0)) + int(len(neighbors))
+            candidates_for_anchor: list[dict[str, Any]] = []
+            seen_free_families: set[tuple[str, str]] = set()
+
+            for n in neighbors:
+                free_surface = clean(n.get("word", n.get("surface", "")))
+                free_ipa = clean(n.get("ipa", ""))
+                phon = float(n.get("phonetic_score", n.get("final_score", 0.0)) or 0.0)
+                if not free_surface or not free_ipa:
+                    reject("missing_free_surface_or_ipa")
+                    continue
+                if phon < DETACHED_MIN_PHONETIC:
+                    reject("phonetic_below_detached_min")
+                    continue
+                if lexically_bad_candidate_surface(free_surface):
+                    reject("lexically_bad_free_surface")
+                    continue
+                verb_reason = detached_low_value_verb_form_reason(free_surface)
+                if verb_reason:
+                    reject(verb_reason)
+                    continue
+                commonness_reason = detached_low_commonness_reason(free_surface)
+                if commonness_reason:
+                    reject(commonness_reason)
+                    continue
+                shorthand_reason = detached_clipped_or_shorthand_reason(free_surface)
+                if shorthand_reason:
+                    reject(shorthand_reason)
+                    continue
+                if surface_key(free_surface) == surface_key(anchor_surface):
+                    reject("same_surface_as_anchor")
+                    continue
+                if same_root(anchor_surface, free_surface):
+                    reject("same_root_as_anchor")
+                    continue
+                if structurally_trivial_variant(anchor_surface, free_surface):
+                    reject("structurally_trivial_variant")
+                    continue
+                if boring_morphophonetic_echo(anchor_surface, free_surface):
+                    reject("boring_morphophonetic_echo")
+                    continue
+                if universal_trivial_bridge(anchor_surface, free_surface):
+                    reject("universal_trivial_bridge")
+                    continue
+                echo_reason = detached_orthographic_echo_reason(anchor_surface, free_surface)
+                if echo_reason:
+                    reject(echo_reason)
+                    continue
+
+                family_key = phonetic_family_key(free_surface, free_ipa)
+                if family_key in seen_free_families:
+                    reject("duplicate_free_phonetic_family_for_anchor")
+                    continue
+                seen_free_families.add(family_key)
+
+                naturalness = max(
+                    expression_quality({"surface": free_surface, "source": n.get("source", "")}),
+                    surface_recognizability_prior(free_surface),
+                )
+                anchor_quality = max(
+                    float(anchor.get("quality_score", 0.0) or 0.0),
+                    expression_quality({"surface": anchor_surface, "source": anchor.get("source", "")}),
+                    surface_recognizability_prior(anchor_surface),
+                )
+                if naturalness < DETACHED_MIN_NATURALNESS:
+                    reject("naturalness_below_detached_min")
+                    continue
+
+                stats["candidates_before_semantic_distance"] = int(stats.get("candidates_before_semantic_distance", 0)) + 1
+                candidates_for_anchor.append({
+                    "anchor": anchor,
+                    "neighbor": n,
+                    "anchor_surface": anchor_surface,
+                    "anchor_ipa": anchor_ipa,
+                    "anchor_pool_actual": anchor_pool_actual,
+                    "free_surface": free_surface,
+                    "free_ipa": free_ipa,
+                    "phonetic_score": phon,
+                    "phonetic_final_score": float(n.get("final_score", phon) or phon),
+                    "naturalness_score": float(naturalness),
+                    "anchor_quality": float(anchor_quality),
+                })
+
+            if not candidates_for_anchor:
+                reject("no_candidates_survived_pre_semantic_for_anchor")
+                continue
+
+            semantic_scores = self.expression.semantic_scores(
+                anchor_surface,
+                [x["free_surface"] for x in candidates_for_anchor],
+            )
+
+            stats["semantic_distance_scored"] = int(stats.get("semantic_distance_scored", 0)) + int(len(candidates_for_anchor))
+            accepted_for_anchor: list[dict[str, Any]] = []
+            for item, sim in zip(candidates_for_anchor, semantic_scores):
+                sim = float(sim)
+                if sim >= DETACHED_MAX_ANCHOR_SEMANTIC_SIM:
+                    reject("semantic_too_close_to_anchor")
+                    continue
+
+                free_surface = item["free_surface"]
+                anchor_surface = item["anchor_surface"]
+                phon = float(item["phonetic_score"])
+                naturalness = float(item["naturalness_score"])
+                anchor_quality = float(item["anchor_quality"])
+                semantic_distance = clamp01(1.0 - sim)
+                same_ipa = clean(item["free_ipa"]) == clean(item["anchor_ipa"])
+                novelty = lexical_novelty_bonus(free_surface, anchor_surface)
+                surprise = humor_surprise_score(phon, 0.0, 0.0, False)
+
+                if free_side == "A":
+                    left_side, right_side = "A", "B"
+                    left_text, right_text = free_surface, anchor_surface
+                    left_ipa, right_ipa = item["free_ipa"], item["anchor_ipa"]
+                    semantic_A_score, semantic_B_score = 0.0, float(item["anchor"].get("semantic_score", 1.0) or 1.0)
+                    retrieval_source_pool, retrieval_target_pool = free_pool_label, anchor_pool_label
+                else:
+                    left_side, right_side = "B", "A"
+                    left_text, right_text = free_surface, anchor_surface
+                    left_ipa, right_ipa = item["free_ipa"], item["anchor_ipa"]
+                    semantic_A_score, semantic_B_score = float(item["anchor"].get("semantic_score", 1.0) or 1.0), 0.0
+                    retrieval_source_pool, retrieval_target_pool = free_pool_label, anchor_pool_label
+
+                bdict = {
+                    "left_side": left_side,
+                    "right_side": right_side,
+                    "left_text": left_text,
+                    "right_text": right_text,
+                    "left_ipa": left_ipa,
+                    "right_ipa": right_ipa,
+                    "sound_source": anchor_surface,
+                    "sound_source_ipa": item["anchor_ipa"],
+                    "candidate": free_surface,
+                    "candidate_ipa": item["free_ipa"],
+                    "source_side": anchor_side,
+                    "opposite_side": free_side,
+                    "source_level": int(item["anchor"].get("level", -1) or -1),
+                    "phonetic_score": phon,
+                    "semantic_A_score": float(semantic_A_score),
+                    "semantic_B_score": float(semantic_B_score),
+                    "cross_semantic_score": 0.0,
+                    "source_semantic_score": float(item["anchor"].get("semantic_score", 1.0) or 1.0),
+                    "opposite_semantic_score": 0.0,
+                    "quality_score": naturalness,
+                    "naturalness_score": naturalness,
+                    "surprise_score": float(surprise),
+                    "lexical_novelty_bonus": float(novelty),
+                    "commonness_bonus": commonness_bonus_from_item({"surface": free_surface, "source": item["neighbor"].get("source", "")}),
+                    "bridge_type": "detached_sound_collision_needs_llm_judge",
+                    "relation": "detached_sound_collision_needs_llm_judge",
+                    "semantic_verified": False,
+                    "semantic_relation": "detached_sound_collision_needs_llm_judge",
+                    "affordance_stage": f"detached_{bucket_id}",
+                    "phonetic_relation": phonetic_relation_label(phon, same_ipa=same_ipa),
+                    "retrieval_bucket": bucket_id,
+                    "retrieval_bucket_label": RETRIEVAL_BUCKET_LABELS.get(bucket_id, bucket_id),
+                    "retrieval_source_pool": retrieval_source_pool,
+                    "retrieval_target_pool": retrieval_target_pool,
+                    "retrieval_anchor_pool": anchor_pool_label,
+                    "retrieval_anchor_pool_actual": item["anchor_pool_actual"],
+                    "retrieval_free_pool": free_pool_label,
+                    "detached_anchor_side": anchor_side,
+                    "detached_free_side": free_side,
+                    "detached_anchor_surface": anchor_surface,
+                    "detached_free_surface": free_surface,
+                    "detached_anchor_ipa": item["anchor_ipa"],
+                    "detached_free_ipa": item["free_ipa"],
+                    "detached_anchor_semantic_similarity": float(sim),
+                    "detached_semantic_distance_from_anchor": float(semantic_distance),
+                    "detached_anchor_quality": float(anchor_quality),
+                    "detached_generation_warning": "one_semantic_anchor_only",
+                    "same_root_penalty_applied": False,
+                }
+                bdict["bridge_score"] = self._detached_score_for_bridge(bdict)
+                bdict["llm_priority_score"] = bdict["bridge_score"]
+                bdict["retrieval_pair_key"] = retrieval_pair_key_for_bridge(bdict)
+                accepted_for_anchor.append(bdict)
+
+            stats["accepted_before_anchor_cap"] = int(stats.get("accepted_before_anchor_cap", 0)) + int(len(accepted_for_anchor))
+            accepted_for_anchor.sort(key=lambda x: (
+                -float(x.get("bridge_score", 0.0) or 0.0),
+                -float(x.get("phonetic_score", 0.0) or 0.0),
+                surface_key(x.get("detached_free_surface", "")),
+            ))
+            kept_for_anchor = accepted_for_anchor[:DETACHED_MAX_PER_ANCHOR]
+            stats["accepted_after_anchor_cap"] = int(stats.get("accepted_after_anchor_cap", 0)) + int(len(kept_for_anchor))
+            if len(accepted_for_anchor) > len(kept_for_anchor):
+                reject("per_anchor_cap", len(accepted_for_anchor) - len(kept_for_anchor))
+            raw.extend(kept_for_anchor)
+
+        raw.sort(key=lambda x: bucket_rank_sort_key(x))
+        out = raw[:DETACHED_MAX_PER_BUCKET]
+        stats["returned_after_bucket_cap"] = int(len(out))
+        if len(raw) > len(out):
+            reject("per_bucket_cap", len(raw) - len(out))
+        self._detached_diagnostics.append(stats)
+        for rank, bridge in enumerate(out, 1):
+            bridge["retrieval_bucket_rank"] = rank
+        return out
+
+    def _bucketize_expansion_bridge(
+        self,
+        bridge: dict[str, Any],
+        pool_index: dict[str, set[tuple[str, str]]] | None = None,
+    ) -> dict[str, Any]:
+        """Assign phonetic-neighbor expansion output to a bucket without dropping recall.
+
+        Direct bucket matching is membership-based.  Expansion matching is a
+        different baseline route: it starts from a semantic node on one side,
+        asks the phonetic index for sound-neighbors, and then checks/proxies the
+        neighbor against the opposite semantic field.  When the generated
+        neighbor is not already present in the explicit opposite pool, it still
+        represents the opposite expanded semantic side for retrieval purposes.
+
+        Therefore:
+          A0 source + B semantic/proxy neighbor -> B1_A0
+          A1 source + B semantic/proxy neighbor -> A1_B1
+          B0 source + A semantic/proxy neighbor -> A1_B0
+          B1 source + A semantic/proxy neighbor -> A1_B1
+
+        If the neighbor is actually in an explicit original/expanded opposite
+        pool, use that concrete pool.  Otherwise use the opposite expanded pool
+        as an expansion-proxy and record that fact in diagnostics fields.
+        """
+        source_side = clean(bridge.get("source_side", ""))
+        source_level = int(bridge.get("source_level", 9) or 9)
+        source_pool = clean(bridge.get("source_pool", bridge.get("retrieval_source_pool", "")))
+        if not source_pool:
+            if source_side == "A":
+                source_pool = "A0" if source_level <= 0 else "A1"
+            elif source_side == "B":
+                source_pool = "B0" if source_level <= 0 else "B1"
+
+        candidate_surface = clean(bridge.get("candidate", bridge.get("candidate_surface", bridge.get("right_text", ""))))
+        candidate_ipa = clean(bridge.get("candidate_ipa", bridge.get("right_ipa", "")))
+        candidate_key = retrieval_pool_member_key(candidate_surface, candidate_ipa)
+
+        pool_index = pool_index or {}
+        if source_side == "A":
+            candidate_pool_order = ["B0", "B1"]
+            proxy_target_pool = "B1"
+        elif source_side == "B":
+            candidate_pool_order = ["A0", "A1"]
+            proxy_target_pool = "A1"
+        else:
+            candidate_pool_order = ["A0", "B0", "A1", "B1"]
+            proxy_target_pool = ""
+
+        target_pool = ""
+        target_membership = ""
+        for pool_name in candidate_pool_order:
+            if candidate_key in pool_index.get(pool_name, set()):
+                target_pool = pool_name
+                target_membership = "explicit_pool_member"
+                break
+
+        if not target_pool and proxy_target_pool:
+            target_pool = proxy_target_pool
+            target_membership = "expansion_opposite_semantic_proxy"
+
+        bucket_id = retrieval_bucket_for_pool_pair(source_pool, target_pool) if target_pool else ""
+
+        out = dict(bridge)
+        out["retrieval_source_pool_actual"] = source_pool
+        out["retrieval_target_pool_actual"] = target_pool
+        out["retrieval_expansion_target_membership"] = target_membership
+        if not bucket_id:
+            out["retrieval_bucket"] = ""
+            out["retrieval_bucket_label"] = "unbucketed_expansion_candidate"
+            out["retrieval_source_pool"] = source_pool
+            out["retrieval_target_pool"] = target_pool
+            out["retrieval_pair_key"] = retrieval_pair_key_for_bridge(out)
+            return out
+
+        regime = next((r for r in RETRIEVAL_BUCKET_REGIMES if r["bucket_id"] == bucket_id), None) or {}
+        out["retrieval_bucket"] = bucket_id
+        out["retrieval_bucket_label"] = RETRIEVAL_BUCKET_LABELS.get(bucket_id, bucket_id)
+        # Store canonical regime pools for bucket ordering/diagnostics.  The
+        # actual/proxy membership fields above preserve expansion provenance.
+        out["retrieval_source_pool"] = regime.get("source_pool", source_pool)
+        out["retrieval_target_pool"] = regime.get("target_pool", target_pool)
+        out["retrieval_pair_key"] = retrieval_pair_key_for_bridge(out)
+        return out
+
+
     def expand_side(self, terms: list[str], side: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Return all semantic candidates and the subset with known IPA.
 
@@ -2073,6 +2826,7 @@ class BridgeMiner:
                     "source_text": source_surface,
                     "source_ipa": query_ipa,
                     "source_level": int(node.get("level", -1)),
+                    "source_pool": clean(node.get("retrieval_pool", "")),
                     "source_semantic_score": float(node.get("semantic_score", 0.0)),
                     "source_origin": node.get("source", ""),
                     "candidate": candidate,
@@ -2211,155 +2965,205 @@ class BridgeMiner:
 
     def mine_bridges(self, a_terms: list[str], b_terms: list[str], semantic_A_results: list[dict[str, Any]] | None = None, semantic_B_results: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         stage_times: dict[str, float] = {}
+
         def mark(name: str, t0: float) -> None:
             stage_times[name] = round(time.time() - t0, 3)
 
         t = time.time()
-        if RETRIEVAL_REUSE_ROW_SEMANTIC_FOR_BRIDGES and semantic_A_results is not None:
-            semantic_A, ipa_A = self.expand_side_from_precomputed(a_terms, "A", semantic_A_results)
+        if RETRIEVAL_REUSE_ROW_SEMANTIC_FOR_BRIDGES:
+            side_A = self.expand_bucketized_side_from_precomputed(a_terms, "A", semantic_A_results)
         else:
-            semantic_A, ipa_A = self.expand_side(a_terms, "A")
+            side_A = self.expand_bucketized_side_from_precomputed(a_terms, "A", None)
+        semantic_A = side_A["semantic_candidates"]
+        ipa_A = side_A["with_ipa"]
+        ipa_A0 = side_A["A0"]
+        ipa_A1 = side_A["A1"]
         mark("bridge_expand_side_A", t)
 
         t = time.time()
-        if RETRIEVAL_REUSE_ROW_SEMANTIC_FOR_BRIDGES and semantic_B_results is not None:
-            semantic_B, ipa_B = self.expand_side_from_precomputed(b_terms, "B", semantic_B_results)
+        if RETRIEVAL_REUSE_ROW_SEMANTIC_FOR_BRIDGES:
+            side_B = self.expand_bucketized_side_from_precomputed(b_terms, "B", semantic_B_results)
         else:
-            semantic_B, ipa_B = self.expand_side(b_terms, "B")
+            side_B = self.expand_bucketized_side_from_precomputed(b_terms, "B", None)
+        semantic_B = side_B["semantic_candidates"]
+        ipa_B = side_B["with_ipa"]
+        ipa_B0 = side_B["B0"]
+        ipa_B1 = side_B["B1"]
         mark("bridge_expand_side_B", t)
 
-        t = time.time()
-        sim = self._pairwise_phonetic(ipa_A, ipa_B)
-        mark("bridge_pairwise_phonetic", t)
+        pool_map = {
+            "A0": ipa_A0,
+            "B0": ipa_B0,
+            "A1": ipa_A1,
+            "B1": ipa_B1,
+        }
+        pool_index = retrieval_pool_index(pool_map)
+        bucket_raw: dict[str, list[dict[str, Any]]] = {bucket_id: [] for bucket_id in RETRIEVAL_BUCKET_ORDER}
+        unbucketed_expansion_count = 0
+        # Per-row detached diagnostics.  Reset here so every retrieval row reports
+        # exactly where detached candidates were rejected.
+        self._detached_diagnostics: list[dict[str, Any]] = []
 
         t = time.time()
-        bridges: list[dict[str, Any]] = []
+        for regime in RETRIEVAL_BUCKET_REGIMES:
+            bucket_id = regime["bucket_id"]
+            bucket_raw[bucket_id] = self._run_bucket_pairwise(
+                bucket_id,
+                regime["source_pool"],
+                regime["target_pool"],
+                pool_map.get(regime["source_pool"], []),
+                pool_map.get(regime["target_pool"], []),
+            )
+        mark("bridge_bucket_pairwise", t)
 
-        # Route 1: direct A-neighborhood × B-neighborhood sound collisions.
-        # Build cheap pair candidates first, then score only a diverse top slice.
-        pair_candidates: list[tuple[float, int, int, float]] = []
-        if sim.size:
-            for i, a in enumerate(ipa_A):
-                if lexically_bad_candidate_surface(a.get("surface", "")):
-                    continue
-                for j, b in enumerate(ipa_B):
-                    if lexically_bad_candidate_surface(b.get("surface", "")):
-                        continue
-                    phon = float(sim[i, j])
-                    if phon < MIN_PAIR_PHONETIC:
-                        continue
-                    if structurally_trivial_variant(a.get("surface", ""), b.get("surface", "")) or boring_morphophonetic_echo(a.get("surface", ""), b.get("surface", "")):
-                        continue
-                    semantic_A_score = float(a.get("semantic_score", 0.0))
-                    semantic_B_score = float(b.get("semantic_score", 0.0))
-                    quality = (float(a.get("quality_score", 0.0)) + float(b.get("quality_score", 0.0))) / 2.0
-                    novelty = lexical_novelty_bonus(a["surface"], b["surface"])
-                    cheap = 0.42 * phon + 0.20 * semantic_A_score + 0.20 * semantic_B_score + 0.08 * quality + novelty
-                    pair_candidates.append((cheap, i, j, phon))
-
-            pair_candidates.sort(reverse=True, key=lambda x: x[0])
-            pair_candidates = pair_candidates[:MAX_DIRECT_PAIR_CANDIDATES]
-
-            for _, i, j, phon in pair_candidates:
-                    a = ipa_A[i]
-                    b = ipa_B[j]
-                    bridge_type = bridge_type_for_pair(a, b, phon)
-                    semantic_A_score = float(a.get("semantic_score", 0.0))
-                    semantic_B_score = float(b.get("semantic_score", 0.0))
-                    quality = (float(a.get("quality_score", 0.0)) + float(b.get("quality_score", 0.0))) / 2.0
-                    level = max(int(a.get("level", 9)), int(b.get("level", 9)))
-                    level_bonus = {0: 1.0, 1: 0.88, 2: 0.74}.get(level, 0.60)
-                    type_bonus = bridge_type_bonus(bridge_type, semantic_A_score, semantic_B_score)
-                    cross_semantic_score = min(semantic_A_score, semantic_B_score)
-
-                    novelty = lexical_novelty_bonus(a["surface"], b["surface"])
-                    common_bonus = (commonness_bonus_from_item(a) + commonness_bonus_from_item(b)) / 2.0
-                    cross_side_bonus = CROSS_SIDE_COLLISION_BONUS if (not same_root(a["surface"], b["surface"]) and phon >= 0.72) else 0.0
-                    naturalness = quality
-                    same_root_flag = same_root(a["surface"], b["surface"]) or structurally_trivial_variant(a["surface"], b["surface"]) or boring_morphophonetic_echo(a["surface"], b["surface"])
-                    surprise = humor_surprise_score(phon, semantic_A_score, semantic_B_score, same_root_flag)
-                    bridge_score = (
-                        0.40 * phon
-                        + 0.13 * naturalness
-                        + 0.13 * surprise
-                        + 0.10 * min(semantic_A_score, semantic_B_score)
-                        + 0.04 * level_bonus
-                        + type_bonus
-                        + novelty
-                        + common_bonus
-                        + cross_side_bonus
-                    )
-
-                    bdict = {
-                        "left_side": "A",
-                        "right_side": "B",
-                        "left_text": a["surface"],
-                        "right_text": b["surface"],
-                        "left_ipa": a["ipa"],
-                        "right_ipa": b["ipa"],
-                        "left_source": a.get("source", ""),
-                        "right_source": b.get("source", ""),
-                        "left_level": int(a.get("level", -1)),
-                        "right_level": int(b.get("level", -1)),
-                        "phonetic_score": phon,
-                        "semantic_A_score": semantic_A_score,
-                        "semantic_B_score": semantic_B_score,
-                        "cross_semantic_score": cross_semantic_score,
-                        "quality_score": quality,
-                        "type_bonus": type_bonus,
-                        "bridge_score": float(bridge_score),
-                        "lexical_novelty_bonus": float(novelty),
-                        "commonness_bonus": float(common_bonus),
-                        "cross_side_collision_bonus": float(cross_side_bonus),
-                        "semantic_verified": True,
-                        "semantic_relation": "direct_cross_side_semantic",
-                        "affordance_stage": f"direct_A{int(a.get('level', -1))}_B{int(b.get('level', -1))}",
-                        "phonetic_relation": phonetic_relation_label(phon, same_ipa=clean(a.get("ipa", "")) == clean(b.get("ipa", ""))),
-                        "naturalness_score": float(naturalness),
-                        "surprise_score": float(surprise),
-                        "same_root_penalty_applied": bool(same_root_flag),
-                        "bridge_type": bridge_type,
-                        "relation": bridge_type,
-                    }
-                    bdict["llm_priority_score"] = llm_priority_score_for_bridge(bdict)
-                    bridges.append(bdict)
-        direct_bridge_count = len(bridges)
-        mark("bridge_direct_pair_loop", t)
-
-        # Route 2: phonetic expansion first, semantic check second.
+        # Route 2 from the baseline: phonetic-neighbor expansion first, semantic
+        # check/proxy second.  This is not Low-leap. It is part of the existing
+        # bridge miner and must remain active; bucketization only assigns each
+        # expansion bridge to the appropriate first-class regime.
         t = time.time()
-        expansion_A_to_B = self._expansion_bridges(ipa_A, "A", b_terms, "B")
+        expansion_A_to_B = [self._bucketize_expansion_bridge(b, pool_index) for b in self._expansion_bridges(ipa_A, "A", b_terms, "B")]
         mark("bridge_expansion_A_to_B", t)
 
         t = time.time()
-        expansion_B_to_A = self._expansion_bridges(ipa_B, "B", a_terms, "A")
+        expansion_B_to_A = [self._bucketize_expansion_bridge(b, pool_index) for b in self._expansion_bridges(ipa_B, "B", a_terms, "A")]
         mark("bridge_expansion_B_to_A", t)
 
-        t = time.time()
-        bridges.extend(expansion_A_to_B)
-        bridges.extend(expansion_B_to_A)
+        for br in expansion_A_to_B + expansion_B_to_A:
+            bucket_id = clean(br.get("retrieval_bucket", ""))
+            if bucket_id in bucket_raw:
+                bucket_raw[bucket_id].append(br)
+            else:
+                unbucketed_expansion_count += 1
 
-        # Global final guard: no trivial/lexically bad bridge may enter final ranking.
-        filtered_bridges: list[dict[str, Any]] = []
-        for br in bridges:
-            left, right = bridge_surface_pair(br)
-            if lexically_bad_candidate_surface(left) or lexically_bad_candidate_surface(right):
-                continue
-            if structurally_trivial_variant(left, right):
-                continue
-            filtered_bridges.append(br)
-        bridges = filtered_bridges
-        mark("bridge_final_filter", t)
+        detached_A2_from_B_count = 0
+        detached_B2_from_A_count = 0
+        if DETACHED_BUCKETS_ENABLED:
+            t = time.time()
+            b_anchors = self._dedupe_anchor_items(list(ipa_B0) + list(ipa_B1))
+            detached_A2_from_B = self._detached_sound_collision_bridges(
+                b_anchors,
+                anchor_pool_label="B01",
+                free_pool_label="A2",
+                bucket_id="A2_B01_DETACHED",
+                anchor_side="B",
+                free_side="A",
+            )
+            bucket_raw["A2_B01_DETACHED"].extend(detached_A2_from_B)
+            detached_A2_from_B_count = len(detached_A2_from_B)
+            mark("bridge_detached_A2_from_B01", t)
+
+            t = time.time()
+            a_anchors = self._dedupe_anchor_items(list(ipa_A0) + list(ipa_A1))
+            detached_B2_from_A = self._detached_sound_collision_bridges(
+                a_anchors,
+                anchor_pool_label="A01",
+                free_pool_label="B2",
+                bucket_id="B2_A01_DETACHED",
+                anchor_side="A",
+                free_side="B",
+            )
+            bucket_raw["B2_A01_DETACHED"].extend(detached_B2_from_A)
+            detached_B2_from_A_count = len(detached_B2_from_A)
+            mark("bridge_detached_B2_from_A01", t)
 
         t = time.time()
-        bridges.sort(key=lambda x: (affordance_stage_rank(x.get("affordance_stage", ""), x.get("bridge_type", "")), -float(x.get("llm_priority_score", x.get("bridge_score", 0.0)))), reverse=False)
-        bridges = select_diverse_bridges(bridges, MAX_BRIDGES)
-        mark("bridge_diverse_select", t)
+        filtered_by_bucket: dict[str, list[dict[str, Any]]] = {bucket_id: [] for bucket_id in RETRIEVAL_BUCKET_ORDER}
+        for bucket_id in RETRIEVAL_BUCKET_ORDER:
+            for br in bucket_raw.get(bucket_id, []):
+                left, right = bridge_surface_pair(br)
+                if lexically_bad_candidate_surface(left) or lexically_bad_candidate_surface(right):
+                    continue
+                if structurally_trivial_variant(left, right):
+                    continue
+                filtered_by_bucket[bucket_id].append(br)
+        mark("bridge_bucket_filter", t)
+
+        t = time.time()
+        selected: list[dict[str, Any]] = []
+        seen_pairs: dict[str, dict[str, Any]] = {}
+        duplicate_events: list[dict[str, Any]] = []
+        counts_after_dedupe = {bucket_id: 0 for bucket_id in RETRIEVAL_BUCKET_ORDER}
+
+        for bucket_id in RETRIEVAL_BUCKET_ORDER:
+            ranked = sorted(filtered_by_bucket[bucket_id], key=bucket_rank_sort_key)
+            local_rank = 0
+            for br in ranked:
+                pair_key = retrieval_pair_key_for_bridge(br)
+                if pair_key in seen_pairs:
+                    duplicate_events.append({
+                        "pair_key": pair_key,
+                        "kept_bucket": seen_pairs[pair_key].get("retrieval_bucket", ""),
+                        "discarded_bucket": bucket_id,
+                    })
+                    continue
+                local_rank += 1
+                nb = dict(br)
+                nb["retrieval_bucket"] = bucket_id
+                nb["retrieval_bucket_rank"] = local_rank
+                nb["retrieval_pair_key"] = pair_key
+                selected.append(nb)
+                seen_pairs[pair_key] = nb
+                counts_after_dedupe[bucket_id] += 1
+        mark("bridge_bucket_dedupe", t)
+
+        t = time.time()
+        bridges = order_bridges_by_retrieval_bucket(selected, PREFINAL_BRIDGE_CANDIDATE_LIMIT)
+        prefinal_bridge_candidate_count = len(bridges)
+        mark("bridge_bucket_select", t)
 
         diagnostics = bridge_diagnostics(bridges)
-        diagnostics["direct_pair_bridge_count"] = direct_bridge_count
+        diagnostics["retrieval_bucket_order"] = list(RETRIEVAL_BUCKET_ORDER)
+        diagnostics["retrieval_bucket_regimes"] = [dict(x) for x in RETRIEVAL_BUCKET_REGIMES]
+        diagnostics["retrieval_bucket_pool_counts"] = {k: len(v) for k, v in pool_map.items()}
+        diagnostics["a1b1_widening_enabled"] = bool(A1B1_PER_SEED_SEMANTIC_ENABLED)
+        diagnostics["fasttext_default_disabled_v15"] = True
+        diagnostics["a1b1_per_seed_semantic_k"] = int(A1B1_PER_SEED_SEMANTIC_K)
+        diagnostics["a1b1_per_seed_limit"] = int(A1B1_PER_SEED_LIMIT)
+        diagnostics["a1_pool_size"] = int(len(ipa_A1))
+        diagnostics["b1_pool_size"] = int(len(ipa_B1))
+        diagnostics["retrieval_bucket_pool_surfaces"] = {
+            k: [clean(x.get("surface", x.get("text", ""))) for x in v]
+            for k, v in pool_map.items()
+        }
+        diagnostics["retrieval_bucket_counts_before_dedupe"] = {bucket_id: len(bucket_raw.get(bucket_id, [])) for bucket_id in RETRIEVAL_BUCKET_ORDER}
+        diagnostics["retrieval_bucket_counts_before_filter"] = {bucket_id: len(bucket_raw.get(bucket_id, [])) for bucket_id in RETRIEVAL_BUCKET_ORDER}
+        diagnostics["retrieval_bucket_counts_after_filter"] = {bucket_id: len(filtered_by_bucket.get(bucket_id, [])) for bucket_id in RETRIEVAL_BUCKET_ORDER}
+        diagnostics["retrieval_bucket_counts_after_dedupe"] = counts_after_dedupe
+        diagnostics["retrieval_bucket_counts_after_final_sanitize"] = retrieval_bucket_counts(bridges)
+        diagnostics["retrieval_exported_bucket_counts"] = retrieval_bucket_counts(bridges)
+        diagnostics["prefinal_bridge_candidate_limit"] = int(PREFINAL_BRIDGE_CANDIDATE_LIMIT)
+        diagnostics["prefinal_bridge_candidate_count"] = int(prefinal_bridge_candidate_count)
+        diagnostics["retrieval_duplicate_pair_events"] = duplicate_events
+        diagnostics["direct_pair_bridge_count"] = sum(len(v) for v in bucket_raw.values()) - len(expansion_A_to_B) - len(expansion_B_to_A)
         diagnostics["expansion_A_to_B_count"] = len(expansion_A_to_B)
         diagnostics["expansion_B_to_A_count"] = len(expansion_B_to_A)
+        diagnostics["detached_buckets_enabled"] = bool(DETACHED_BUCKETS_ENABLED)
+        diagnostics["detached_A2_from_B01_count"] = int(detached_A2_from_B_count)
+        diagnostics["detached_B2_from_A01_count"] = int(detached_B2_from_A_count)
+        diagnostics["detached_neighbors_per_anchor"] = int(DETACHED_NEIGHBORS_PER_ANCHOR)
+        diagnostics["detached_min_phonetic"] = float(DETACHED_MIN_PHONETIC)
+        diagnostics["detached_max_anchor_semantic_sim"] = float(DETACHED_MAX_ANCHOR_SEMANTIC_SIM)
+        diagnostics["detached_anti_echo_filter_enabled"] = True
+        diagnostics["detached_low_value_verb_filter_enabled"] = True
+        diagnostics["detached_commonness_filter_enabled"] = True
+        diagnostics["detached_strong_orthographic_overlap_filter_enabled"] = True
+        diagnostics["detached_clipped_shorthand_filter_enabled"] = True
+        diagnostics["detached_min_free_recognizability"] = float(DETACHED_MIN_FREE_RECOGNIZABILITY)
+        diagnostics["detached_max_per_anchor"] = int(DETACHED_MAX_PER_ANCHOR)
+        diagnostics["detached_max_per_bucket"] = int(DETACHED_MAX_PER_BUCKET)
+        detached_stats = list(getattr(self, "_detached_diagnostics", []) or [])
+        diagnostics["detached_rejection_stats"] = detached_stats
+        detached_totals: dict[str, int] = {}
+        for st in detached_stats:
+            for reason, count in (st.get("rejections", {}) or {}).items():
+                detached_totals[reason] = int(detached_totals.get(reason, 0)) + int(count)
+        diagnostics["detached_rejection_totals"] = detached_totals
+        diagnostics["detached_neighbors_seen_total"] = int(sum(int(st.get("neighbors_seen", 0) or 0) for st in detached_stats))
+        diagnostics["detached_candidates_before_semantic_distance_total"] = int(sum(int(st.get("candidates_before_semantic_distance", 0) or 0) for st in detached_stats))
+        diagnostics["detached_semantic_distance_scored_total"] = int(sum(int(st.get("semantic_distance_scored", 0) or 0) for st in detached_stats))
+        diagnostics["detached_accepted_before_anchor_cap_total"] = int(sum(int(st.get("accepted_before_anchor_cap", 0) or 0) for st in detached_stats))
+        diagnostics["detached_accepted_after_anchor_cap_total"] = int(sum(int(st.get("accepted_after_anchor_cap", 0) or 0) for st in detached_stats))
+        diagnostics["unbucketed_expansion_count"] = int(unbucketed_expansion_count)
         diagnostics["phonetic_probe_beam"] = PHONETIC_PROBE_BEAM
         diagnostics["phonetic_neighbors_per_probe"] = PHONETIC_NEIGHBORS_PER_PROBE
         diagnostics["min_expansion_phonetic"] = MIN_EXPANSION_PHONETIC
@@ -2370,6 +3174,7 @@ class BridgeMiner:
         diagnostics["bridge_use_level2"] = bool(BRIDGE_USE_LEVEL2)
         diagnostics["reuse_row_semantic_for_bridges"] = bool(RETRIEVAL_REUSE_ROW_SEMANTIC_FOR_BRIDGES)
         diagnostics["use_fasttext"] = bool(self.fasttext is not None and self.fasttext.enabled)
+        diagnostics["low_leap_enabled_in_primary_output"] = False
         if self.fasttext is not None:
             diagnostics.update(getattr(self.fasttext, "last_stats", {}))
 
@@ -2395,11 +3200,30 @@ class BridgeMiner:
         }
 
     def phonetic_affordances_for_terms(self, terms: list[str], side: str, top_k_each: int = 8, max_terms: int = 8) -> list[dict[str, Any]]:
+        """Batch phonetic affordance search for the row's French terms.
+
+        Same result contract as the old term-by-term search_from_text loop, but
+        it performs one batched phonetic FAISS search for all known IPA probes.
+        """
+        selected_terms = unique_keep_order(terms, limit=max_terms)
+        probe_records: list[tuple[str, str]] = []
+        seen_probe_ipas: set[str] = set()
+        for term in selected_terms:
+            records = self.phonetic.lookup_records(term, limit=1)
+            if not records:
+                continue
+            ipa = clean(records[0].get("ipa", ""))
+            if not ipa:
+                continue
+            probe_records.append((term, ipa))
+            seen_probe_ipas.add(ipa)
+
+        neighbors_by_ipa = self.phonetic.search_many(list(seen_probe_ipas), top_k=top_k_each) if seen_probe_ipas else {}
+
         out: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
-        for term in unique_keep_order(terms, limit=max_terms):
-            results = self.phonetic.search_from_text(term, top_k=top_k_each)
-            for r in results:
+        for term, probe_ipa in probe_records:
+            for r in neighbors_by_ipa.get(probe_ipa, []):
                 word = clean(r.get("word", ""))
                 ipa = clean(r.get("ipa", ""))
                 # Do not waste affordance slots on the same trivial family as the probe.
@@ -2409,8 +3233,11 @@ class BridgeMiner:
                 if key in seen:
                     continue
                 seen.add(key)
-                r["probe_side"] = side
-                out.append(r)
+                nr = dict(r)
+                nr["probe_text"] = clean(term)
+                nr["probe_ipa"] = probe_ipa
+                nr["probe_side"] = side
+                out.append(nr)
         out = collapse_phonetic_records_by_family(out, surface_key_name="word", limit=PHONETIC_K)
         out.sort(key=lambda x: float(x.get("final_score", 0.0)), reverse=True)
         return out[:PHONETIC_K]
@@ -2436,24 +3263,48 @@ class RetrievalPipeline:
 
         t = time.time()
         a_terms, b_terms = side_terms(row)
-        pun_word_fr = clean(row.get("pun_word_fr", ""))
         semantic_query = build_semantic_query(row)
         lexical_query = build_lexical_query(row)
-        semantic_A_query = " ".join(a_terms)
-        semantic_B_query = " ".join(b_terms)
-        lexical_A_query = " ".join(a_terms + [pun_word_fr])
-        lexical_B_query = " ".join(b_terms + [pun_word_fr])
+        lexical_A_query = " ".join(a_terms)
+        lexical_B_query = " ".join(b_terms)
+        semantic_A_requests = semantic_side_requests(a_terms, "A", SEMANTIC_K)
+        semantic_B_requests = semantic_side_requests(b_terms, "B", SEMANTIC_K)
+        semantic_A_channels = [channel for _, _, channel in semantic_A_requests]
+        semantic_B_channels = [channel for _, _, channel in semantic_B_requests]
+        diagnostics_input = {
+            "semantic_launch_mode": "per_term",
+            "retrieval_input_mode": "french_lists_only",
+            "meaning_A_term_count": len(a_terms),
+            "meaning_B_term_count": len(b_terms),
+        }
         mark("setup", t)
 
         t = time.time()
-        semantic_many = self.expression.semantic_search_many([
-            (semantic_query, SEMANTIC_K, "semantic_blended"),
-            (semantic_A_query, SEMANTIC_K, "semantic_A"),
-            (semantic_B_query, SEMANTIC_K, "semantic_B"),
-        ])
+        semantic_blended_query = " ".join(
+            unique_keep_order(a_terms + b_terms, limit=24)
+        )
+
+        semantic_many = self.expression.semantic_search_many(
+            (
+                [(semantic_blended_query, SEMANTIC_K, "semantic_blended")]
+                if clean(semantic_blended_query)
+                else []
+            )
+            + semantic_A_requests
+            + semantic_B_requests
+        )
+
         semantic_blended = semantic_many.get("semantic_blended", [])
-        semantic_A = semantic_many.get("semantic_A", [])
-        semantic_B = semantic_many.get("semantic_B", [])
+
+        semantic_A = merge_semantic_side_results(semantic_many, semantic_A_channels)
+        semantic_B = merge_semantic_side_results(semantic_many, semantic_B_channels)
+
+        semantic_blended = unique_keep_order_dicts_by_surface(
+            semantic_blended + semantic_A[:5] + semantic_B[:5],
+            limit=SEMANTIC_K,
+        )
+        diagnostics_input["semantic_A_result_count_after_merge"] = len(semantic_A)
+        diagnostics_input["semantic_B_result_count_after_merge"] = len(semantic_B)
         mark("semantic_search", t)
 
         t = time.time()
@@ -2469,25 +3320,11 @@ class RetrievalPipeline:
         t = time.time()
         phonetic_A = self.bridge_miner.phonetic_affordances_for_terms(a_terms, "A", top_k_each=PHONETIC_NEIGHBORS_PER_PROBE, max_terms=min(len(a_terms), PHONETIC_PROBE_BEAM))
         phonetic_B = self.bridge_miner.phonetic_affordances_for_terms(b_terms, "B", top_k_each=PHONETIC_NEIGHBORS_PER_PROBE, max_terms=min(len(b_terms), PHONETIC_PROBE_BEAM))
-        phonetic_pun = self.phonetic.search_from_text(pun_word_fr, top_k=PHONETIC_K) if pun_word_fr else []
-        filtered_pun: list[dict[str, Any]] = []
-        seen_pun: set[tuple[str, str]] = set()
-        for r in phonetic_pun:
-            word = clean(r.get("word", ""))
-            if structurally_trivial_variant(pun_word_fr, word) and surface_key(pun_word_fr) != surface_key(word):
-                continue
-            key = phonetic_family_key(word, r.get("ipa", ""))
-            if key in seen_pun:
-                continue
-            seen_pun.add(key)
-            r = dict(r)
-            r["probe_side"] = "pun_word_fr"
-            filtered_pun.append(r)
-        phonetic_pun = collapse_phonetic_records_by_family(filtered_pun, surface_key_name="word", limit=PHONETIC_K)
         mark("phonetic_affordances", t)
 
         t = time.time()
         diagnostics = dict(bridge_result["bridge_diagnostics"])
+        diagnostics.update(diagnostics_input)
         merged_stage_times = dict(diagnostics.get("stage_times_sec", {}) or {})
         merged_stage_times.update(stage_times)
         diagnostics["stage_times_sec"] = merged_stage_times
@@ -2502,16 +3339,14 @@ class RetrievalPipeline:
             "top_semantic_blended": semantic_blended[:5],
             "top_phonetic_A": phonetic_A[:5],
             "top_phonetic_B": phonetic_B[:5],
-            "top_phonetic_pun_word": phonetic_pun[:5],
         }
 
         out = {
             "meaning_A_terms": a_terms,
             "meaning_B_terms": b_terms,
-            "pun_word_fr": pun_word_fr,
             "semantic_query": semantic_query,
-            "semantic_A_query": semantic_A_query,
-            "semantic_B_query": semantic_B_query,
+            "semantic_A_query": " | ".join(a_terms),
+            "semantic_B_query": " | ".join(b_terms),
             "lexical_query": lexical_query,
             "semantic_expressions": semantic_blended,
             "semantic_A_expressions": semantic_A,
@@ -2521,7 +3356,6 @@ class RetrievalPipeline:
             "lexical_B_expressions": lexical_B,
             "phonetic_A_candidates": phonetic_A,
             "phonetic_B_candidates": phonetic_B,
-            "phonetic_pun_candidates": phonetic_pun,
             "semantic_A_with_ipa_count": bridge_result["semantic_A_with_ipa_count"],
             "semantic_B_with_ipa_count": bridge_result["semantic_B_with_ipa_count"],
             "bridge_candidates": bridge_result["bridge_candidates"],
@@ -2531,6 +3365,46 @@ class RetrievalPipeline:
         }
         mark("pack_assembly", t)
         diagnostics["stage_times_sec"] = stage_times
+
+        # Integrated Low-leap generator-affordance behavior.
+        try:
+            current_ideas = _additive_generator_ideas_from_bridges(
+                out.get("bridge_candidates", []) or [],
+                limit=MAX_GENERATOR_IDEAS,
+            )
+            # Mine Low-leap candidates when the row is thin, but never as a competing
+            # backfill lane. They are appended to the internal candidate pool and
+            # exported additively by lane.
+            if False and len(current_ideas) < LOW_LEAP_TARGET_GENERATOR_IDEAS:
+                extra = _mine_iterative_low_leap_bridges(self, out, current_ideas)
+                if extra:
+                    existing = out.get("bridge_candidates", []) or []
+                    # Exact bridge dedupe only; no root collapse and no score top-N.
+                    merged: list[dict[str, Any]] = []
+                    seen: set[tuple[str, str, str]] = set()
+                    for b in list(existing) + list(extra):
+                        key = _bridge_exact_export_key(b)
+                        if key in seen:
+                            continue
+                        merged.append(b)
+                        seen.add(key)
+                    out["bridge_candidates"] = merged
+                    diag = dict(out.get("bridge_diagnostics", {}) or {})
+                    diag["low_leap_candidate_count"] = int(len(extra))
+                    diag["bridge_count"] = int(len(merged))
+                    diag["selection_policy"] = "additive_lanes_exact_dedupe_only"
+                    out["bridge_diagnostics"] = diag
+                    if "generator_affordance_pack" in out and isinstance(out["generator_affordance_pack"], dict):
+                        gen = dict(out["generator_affordance_pack"])
+                        gen["bridge_diagnostics"] = diag
+                        gen["top_bridge_candidates"] = export_bridge_candidates(merged, MAX_GENERATOR_AFFORDANCES)
+                        out["generator_affordance_pack"] = gen
+        except Exception as e:
+            if RETRIEVAL_DEBUG_PACKS:
+                diag = dict(out.get("bridge_diagnostics", {}) or {})
+                diag["low_leap_error"] = str(e)
+                out["bridge_diagnostics"] = diag
+
         return out
 
 
@@ -2555,6 +3429,11 @@ def export_bridge_candidate(b: dict[str, Any]) -> dict[str, Any]:
     return {
         "bridge_type": bridge_type,
         "relation": clean(b.get("relation") or bridge_type),
+        "retrieval_bucket": clean(b.get("retrieval_bucket", "")),
+        "retrieval_bucket_rank": int(b.get("retrieval_bucket_rank", 0) or 0),
+        "retrieval_pair_key": clean(b.get("retrieval_pair_key") or retrieval_pair_key_for_bridge(b)),
+        "retrieval_source_pool": clean(b.get("retrieval_source_pool", "")),
+        "retrieval_target_pool": clean(b.get("retrieval_target_pool", "")),
         "source_side": clean(b.get("source_side") or b.get("left_side") or ""),
         "opposite_side": clean(b.get("opposite_side") or b.get("right_side") or ""),
         "source_surface": source_surface,
@@ -2589,6 +3468,15 @@ def export_bridge_candidate(b: dict[str, Any]) -> dict[str, Any]:
         "lexical_novelty_bonus": float(b.get("lexical_novelty_bonus", 0.0) or 0.0),
         "commonness_bonus": float(b.get("commonness_bonus", 0.0) or 0.0),
         "cross_side_collision_bonus": float(b.get("cross_side_collision_bonus", 0.0) or 0.0),
+        "detached_anchor_side": clean(b.get("detached_anchor_side", "")),
+        "detached_free_side": clean(b.get("detached_free_side", "")),
+        "detached_anchor_surface": clean(b.get("detached_anchor_surface", "")),
+        "detached_free_surface": clean(b.get("detached_free_surface", "")),
+        "detached_anchor_ipa": clean(b.get("detached_anchor_ipa", "")),
+        "detached_free_ipa": clean(b.get("detached_free_ipa", "")),
+        "detached_anchor_semantic_similarity": float(b.get("detached_anchor_semantic_similarity", 0.0) or 0.0),
+        "detached_semantic_distance_from_anchor": float(b.get("detached_semantic_distance_from_anchor", 0.0) or 0.0),
+        "detached_generation_warning": clean(b.get("detached_generation_warning", "")),
     }
 
 
@@ -2708,128 +3596,19 @@ def bucket_exported_affordances(candidates: list[dict[str, Any]]) -> dict[str, l
     return {k: v for k, v in buckets.items() if v}
 
 
-def export_bridge_candidates(bridges: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
-    diversified = diversify_bridge_candidates_for_generator(bridges, limit=limit)
-    return [export_bridge_candidate(b) for b in diversified]
 
 
 
 
-def _is_low_leap_bridge(b: dict[str, Any]) -> bool:
-    marker = " ".join([
-        clean(b.get("bridge_type", "")),
-        clean(b.get("relation", "")),
-        clean(b.get("semantic_relation", "")),
-        clean(b.get("affordance_stage", "")),
-    ]).lower()
-    return "low_leap" in marker
-
-def score_profile_for_generator(b: dict[str, Any]) -> dict[str, float]:
-    """Compact, self-documenting scores for generator-facing retrieval ideas.
-
-    Internal retrieval may keep many diagnostic scores, but the generator should
-    see only the score dimensions that explain why a surface pair is useful.
-    """
-    phonetic_match = clamp01(b.get("phonetic_score", 0.0))
-    french_naturalness = max(
-        clamp01(b.get("naturalness_score", b.get("quality_score", 0.0))),
-        max(surface_naturalness_score(x) for x in bridge_surface_pair(b)),
-    )
-    semantic_surprise = clamp01(b.get("surprise_score", 0.0))
-    english_meaning_similarity = max(
-        clamp01(b.get("source_semantic_score", 0.0)),
-        clamp01(b.get("opposite_semantic_score", 0.0)),
-        clamp01(b.get("semantic_A_score", 0.0)),
-        clamp01(b.get("semantic_B_score", 0.0)),
-    )
-    overall_score = clamp01(b.get("llm_priority_score", b.get("bridge_score", b.get("score", 0.0))))
-    return {
-        "phonetic_match": round(float(phonetic_match), 4),
-        "french_naturalness": round(float(french_naturalness), 4),
-        "semantic_surprise": round(float(semantic_surprise), 4),
-        "english_meaning_similarity": round(float(english_meaning_similarity), 4),
-        "overall_score": round(float(overall_score), 4),
-    }
 
 
-def compact_generator_idea(b: dict[str, Any]) -> dict[str, Any]:
-    """Minimal generator-facing idea: surfaces + relation + scores. No IPA/prose/debug."""
-    left, right = bridge_surface_pair(b)
-    relation = clean(b.get("phonetic_relation") or b.get("relation") or b.get("bridge_type") or "")
-    if relation in {"exact_or_near_homophone", "different_surface_homophone_bridge", "expansion_homophone_needs_judge"}:
-        relation = "same_sound"
-    elif relation in {"strong_phonetic", "near_phonetic", "different_surface_strong_phonetic_bridge", "expansion_strong_phonetic_needs_judge", "expansion_near_phonetic_needs_judge"}:
-        relation = "similar_sound"
-    scores = score_profile_for_generator(b)
-    # Generator-facing output: only surface pair, relation, and the approved score profile.
-    # No IPA, no prose, no bucket labels, no selection-reason fields.
-    if not clean(left) or not clean(right):
-        return {}
-    return {
-        "left": clean(left),
-        "right": clean(right),
-        "relation": relation,
-        "scores": scores,
-    }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Compact storage helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def compact_retrieval_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    """Return the compact generator-facing retrieval payload stored in TSV.
-
-    Full retrieval packs are large and mostly useful for debugging. The compact
-    payload keeps only the high-value affordances needed by generator.py. Set
-    RETRIEVAL_DEBUG_PACKS=1 to also store the full pack in the TSV.
-    """
-    gen = dict(pack.get("generator_affordance_pack", {}))
-    gen["pun_word_fr"] = pack.get("pun_word_fr", "")
-    gen["meaning_A_terms"] = pack.get("meaning_A_terms", gen.get("meaning_A_terms", []))[:8]
-    gen["meaning_B_terms"] = pack.get("meaning_B_terms", gen.get("meaning_B_terms", []))[:8]
-    gen["fallback_level"] = pack.get("fallback_level", gen.get("fallback_level", ""))
-    gen["bridge_diagnostics"] = pack.get("bridge_diagnostics", gen.get("bridge_diagnostics", {}))
-    # Keep these aliases stable for downstream generator code, but preserve a
-    # diverse menu of affordances rather than a single scalar winner.
-    gen["top_bridge_candidates"] = export_bridge_candidates(
-        pack.get("bridge_candidates", gen.get("top_bridge_candidates", [])),
-        MAX_GENERATOR_AFFORDANCES,
-    )
-    gen["top_semantic_A"] = pack.get("semantic_A_expressions", gen.get("top_semantic_A", []))[:5]
-    gen["top_semantic_B"] = pack.get("semantic_B_expressions", gen.get("top_semantic_B", []))[:5]
-    gen["top_semantic_blended"] = pack.get("semantic_expressions", gen.get("top_semantic_blended", []))[:5]
-    gen["top_phonetic_A"] = pack.get("phonetic_A_candidates", gen.get("top_phonetic_A", []))[:5]
-    gen["top_phonetic_B"] = pack.get("phonetic_B_candidates", gen.get("top_phonetic_B", []))[:5]
-    gen["top_phonetic_pun_word"] = pack.get("phonetic_pun_candidates", gen.get("top_phonetic_pun_word", []))[:5]
-    judge_source = sorted(
-        gen.get("top_bridge_candidates", []) or [],
-        key=lambda c: (affordance_stage_rank(c.get("affordance_stage", ""), c.get("bridge_type", "")), -float(c.get("llm_priority_score", c.get("bridge_score", 0.0)) or 0.0)),
-    )[:LLM_JUDGE_CANDIDATE_LIMIT]
-    gen["llm_judge_candidates"] = [
-        {
-            "rank": i + 1,
-            "source_surface": c.get("source_surface", c.get("a_surface", "")),
-            "candidate_surface": c.get("candidate_surface", c.get("b_surface", "")),
-            "source_ipa": c.get("source_ipa", c.get("a_ipa", "")),
-            "candidate_ipa": c.get("candidate_ipa", c.get("b_ipa", "")),
-            "bridge_type": c.get("bridge_type", ""),
-            "affordance_stage": c.get("affordance_stage", ""),
-            "semantic_relation": c.get("semantic_relation", ""),
-            "semantic_verified": c.get("semantic_verified", False),
-            "phonetic_relation": c.get("phonetic_relation", ""),
-            "llm_priority_score": c.get("llm_priority_score", c.get("bridge_score", 0.0)),
-            "bridge_score": c.get("bridge_score", 0.0),
-            "phonetic_score": c.get("phonetic_score", 0.0),
-            "naturalness_score": c.get("naturalness_score", 0.0),
-            "surprise_score": c.get("surprise_score", 0.0),
-            "pivotability_score": c.get("pivotability_score", 0.0),
-            "affordance_bucket": c.get("affordance_bucket", ""),
-            "opposite_semantic_score": c.get("opposite_semantic_score", 0.0),
-        }
-        for i, c in enumerate(judge_source)
-    ]
-    return gen
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2878,7 +3657,7 @@ def retrieve_dataset(df: pd.DataFrame, model: str, start: int = 0, end: int = -1
             semantic_counts.append(len(pack["semantic_expressions"]))
             lexical_counts.append(len(pack["lexical_expressions"]))
             phonetic_counts.append(
-                len(pack["phonetic_A_candidates"]) + len(pack["phonetic_B_candidates"]) + len(pack["phonetic_pun_candidates"])
+                len(pack["phonetic_A_candidates"]) + len(pack["phonetic_B_candidates"])
             )
             diag = pack.get("bridge_diagnostics", {})
             bridge_counts.append(int(diag.get("bridge_count", len(pack["bridge_candidates"]))))
@@ -2963,9 +3742,6 @@ def debug_row_local(model: str, row_idx: int = 0) -> None:
     pack = retriever.retrieve_row(row)
 
     print("\nROW", row_idx)
-    print("text_clean:", clean(row.get("text_clean", "")))
-    print("pun_word:", clean(row.get("pun_word", "")))
-    print("pun_word_fr:", clean(row.get("pun_word_fr", "")))
     print("A:", pack["meaning_A_terms"])
     print("B:", pack["meaning_B_terms"])
     print("fallback_level:", pack["fallback_level"])
@@ -3355,7 +4131,339 @@ def lexically_bad_candidate_surface(x: Any) -> bool:
         return True
     return False
 
+def is_detached_bridge(b: dict[str, Any]) -> bool:
+    marker = " ".join([
+        clean(b.get("retrieval_bucket", "")),
+        clean(b.get("bridge_type", "")),
+        clean(b.get("relation", "")),
+        clean(b.get("semantic_relation", "")),
+        clean(b.get("affordance_stage", "")),
+    ]).lower()
+    return "detached" in marker
+
+
+
+
+
+_DETACHED_VERB_FORM_ALLOWLIST = {
+    "danse", "dense", "froid", "effroi", "pris", "quoi", "cois",
+    "temps", "tant", "tante", "conte", "compte", "comte",
+}
+
+
+def detached_low_value_verb_form_reason(surface: Any) -> str:
+    """Reject detached free candidates that are likely bare conjugation junk."""
+    raw = norm_text(surface)
+    plain = _plain_word(surface)
+    if not plain:
+        return "empty_detached_verb_surface"
+    allow_plain = {_plain_word(x) for x in _DETACHED_VERB_FORM_ALLOWLIST}
+    if raw in _DETACHED_VERB_FORM_ALLOWLIST or plain in allow_plain:
+        return ""
+
+    if len(plain) >= 5 and plain.endswith(("ez", "iez")):
+        return "detached_low_value_ez_verb_form"
+    if len(plain) >= 6 and plain.endswith(("ent", "aient", "erent", "issent")):
+        return "detached_low_value_ent_verb_form"
+
+    if len(plain) >= 6 and plain.endswith(("er", "ir", "re")):
+        if surface_recognizability_prior(raw) < 0.30:
+            return "detached_low_value_infinitive_like_form"
+
+    if len(plain) >= 6 and plain.endswith(("ee", "ees", "ue", "ues", "ie", "ies")):
+        if surface_recognizability_prior(raw) < 0.20:
+            return "detached_low_value_participle_like_form"
+
+    return ""
+
+
+
+def detached_low_commonness_reason(surface: Any) -> str:
+    """Reject detached free candidates that are too rare/technical/inflectional-looking.
+
+    Detached buckets have no semantic support on the free side. A detached free
+    candidate therefore needs to be recognizable enough for the LLM/user to use as
+    a pun pivot. This targets rare forms like comptât, engluait, maigrît while
+    preserving common words and recognizable nouns/adjectives.
+    """
+    raw = norm_text(surface)
+    plain = _plain_word(surface)
+    if not plain:
+        return "empty_detached_commonness_surface"
+
+    recognizability = surface_recognizability_prior(raw)
+    quality = expression_quality({"surface": raw, "source": ""})
+    commonness = max(recognizability, quality)
+
+    if len(plain) >= 5 and plain.endswith(("at", "ait", "aient", "it", "irent")):
+        if commonness < 0.55:
+            return "detached_rare_conjugation_commonness"
+
+    if len(plain) >= 6 and plain.endswith(("at", "it")) and commonness < 0.60:
+        return "detached_rare_literary_verb_commonness"
+
+    if len(plain) >= 8 and commonness < DETACHED_MIN_FREE_RECOGNIZABILITY:
+        return "detached_long_low_commonness"
+
+    if commonness < 0.16:
+        return "detached_very_low_commonness"
+
+    return ""
+
+
+def _char_ngrams_for_detached(s: str, n: int) -> set[str]:
+    s = _plain_word(s)
+    if len(s) < n:
+        return set()
+    return {s[i:i+n] for i in range(0, len(s) - n + 1)}
+
+
+def _detached_ngram_jaccard(a: str, b: str, n: int) -> float:
+    aa = _char_ngrams_for_detached(a, n)
+    bb = _char_ngrams_for_detached(b, n)
+    if not aa or not bb:
+        return 0.0
+    return len(aa & bb) / max(1, len(aa | bb))
+
+
+def _detached_ordered_subsequence_ratio(shorter: str, longer: str) -> float:
+    """How much of shorter appears in longer in order, not necessarily contiguously."""
+    s = _plain_word(shorter)
+    l = _plain_word(longer)
+    if not s or not l:
+        return 0.0
+    j = 0
+    for ch in l:
+        if j < len(s) and s[j] == ch:
+            j += 1
+    return j / max(1, len(s))
+
+
+def detached_high_orthographic_overlap_reason(anchor: Any, free: Any) -> str:
+    """Stronger detached-only visual-overlap suppression.
+
+    Targets remaining junk such as exporté~explorer, excepté~accepter,
+    essor~efforts, and pare~parts.  This is intentionally stricter than the
+    ordinary anti-echo guard because detached candidates otherwise have no
+    semantic support on the free side.
+    """
+    a = _plain_word(anchor)
+    f = _plain_word(free)
+    if not a or not f:
+        return "empty_anchor_or_free_for_ortho_overlap"
+    if a == f:
+        return "same_plain_surface_ortho"
+
+    min_len = min(len(a), len(f))
+    max_len = max(len(a), len(f))
+    if min_len <= 2:
+        return "too_short_ortho_overlap_surface"
+
+    short, long = (a, f) if len(a) <= len(f) else (f, a)
+    edit = _levenshtein(a, f, max_cutoff=8)
+    lcp = _longest_common_prefix_len(a, f)
+    lcs = _longest_common_suffix_len(a, f)
+    tri = _detached_ngram_jaccard(a, f, 3)
+    four = _detached_ngram_jaccard(a, f, 4)
+    subseq = _detached_ordered_subsequence_ratio(short, long)
+
+    # Short forms with almost all letters shared are almost always weak visual
+    # echoes in detached mode: pare~parts, pars~parts, cois~quoi-like cases.
+    if min_len <= 4:
+        shared = len(set(a) & set(f)) / max(1, len(set(short)))
+        if shared >= 0.75 and edit <= 3:
+            return "short_high_letter_overlap_echo"
+        if subseq >= 0.80 and edit <= 3:
+            return "short_subsequence_echo"
+
+    # Long substring/near-substring relation.
+    if min_len >= 4 and short in long and (max_len - min_len) <= 5:
+        return "substring_containment_ortho_echo"
+
+    # High trigram/fourgram reuse plus small edit distance catches exporté~explorer,
+    # excepté~accepter, effort~essor style leaks.
+    if min_len >= 5:
+        if tri >= 0.34 and edit <= 5:
+            return "high_trigram_overlap_echo"
+        if four >= 0.25 and edit <= 6:
+            return "high_fourgram_overlap_echo"
+
+    # Long common prefix/suffix is especially bad in detached buckets.
+    if min_len >= 5:
+        if lcp >= 4 and (lcp / min_len) >= 0.55:
+            return "strong_shared_prefix_ortho_echo"
+        if lcs >= 4 and (lcs / min_len) >= 0.55:
+            return "strong_shared_suffix_ortho_echo"
+
+    # Same ordered skeleton means it often feels like a mechanical mutation.
+    if min_len >= 5 and subseq >= 0.82 and edit <= 6:
+        return "ordered_subsequence_ortho_echo"
+
+    return ""
+
+
+def detached_clipped_or_shorthand_reason(surface: Any) -> str:
+    """Reject obvious clipped/domain shorthand detached pivots.
+
+    Examples: compta-like business shorthand and fragmentary clipped forms.
+    """
+    raw = norm_text(surface)
+    plain = _plain_word(surface)
+    if not plain:
+        return "empty_detached_shorthand_surface"
+
+    # Common clipped/domain abbreviations that are valid French but poor detached
+    # pun pivots in this dataset.
+    explicit_bad = {
+        "compta", "proba", "maths", "info", "admin", "promo",
+    }
+    if raw in explicit_bad or plain in explicit_bad:
+        return "detached_clipped_shorthand_surface"
+
+    # Short final-a/o clipped style with low recognizability.
+    if 5 <= len(plain) <= 7 and plain.endswith(("a", "o")):
+        if surface_recognizability_prior(raw) < 0.45:
+            return "detached_probable_clipped_shorthand"
+
+    return ""
+
+
+
+def detached_orthographic_echo_reason(anchor: Any, free: Any) -> str:
+    """Detached-bucket anti-echo guard.
+
+    Catches mechanical spelling/inflection echoes that survive ordinary root
+    filters, such as pars~parts, essor~efforts, essorent~efforts,
+    remarié~remarquer, dépendue~défendu.
+    """
+    a = _plain_word(anchor)
+    f = _plain_word(free)
+    if not a or not f:
+        return "empty_anchor_or_free_for_echo_check"
+    if a == f:
+        return "same_plain_surface"
+
+    min_len = min(len(a), len(f))
+    if min_len <= 2:
+        return "too_short_detached_surface"
+
+    if min_len <= 4:
+        edit = _levenshtein(a, f, max_cutoff=2)
+        if edit <= 1:
+            return "short_one_edit_echo"
+        if a.startswith(f) or f.startswith(a):
+            return "short_prefix_echo"
+
+    edit = _levenshtein(a, f, max_cutoff=5)
+    lcp = _longest_common_prefix_len(a, f)
+    lcs = _longest_common_suffix_len(a, f)
+
+    if min_len >= 4 and (a.startswith(f) or f.startswith(a)):
+        if abs(len(a) - len(f)) <= 4:
+            return "contains_surface_extension_echo"
+
+    if min_len >= 5:
+        if lcp >= 4 and lcp / max(1, min_len) >= 0.62 and edit <= 4:
+            return "long_shared_prefix_echo"
+        if lcs >= 4 and lcs / max(1, min_len) >= 0.62 and edit <= 4:
+            return "long_shared_suffix_echo"
+
+    if min_len >= 6:
+        aset = set(a)
+        fset = set(f)
+        char_jaccard = len(aset & fset) / max(1, len(aset | fset))
+        if char_jaccard >= 0.72 and edit <= 5:
+            return "high_character_overlap_echo"
+
+    aa = _strip_productive_prefixes_for_final_guard(a)
+    ff = _strip_productive_prefixes_for_final_guard(f)
+    if (aa != a or ff != f) and min(len(aa), len(ff)) >= 4:
+        if aa == ff:
+            return "productive_prefix_same_stem_echo"
+        if _levenshtein(aa, ff, max_cutoff=3) <= 2:
+            return "productive_prefix_near_stem_echo"
+
+    overlap_reason = detached_high_orthographic_overlap_reason(anchor, free)
+    if overlap_reason:
+        return overlap_reason
+
+    return ""
+
+
+def detached_bridge_final_rejection_reason(b: dict[str, Any]) -> str:
+    """Return why a detached bridge fails final sanitation, or '' if valid.
+
+    This is intentionally separate from bridge_is_structurally_valid(). Detached
+    bridges have one semantic anchor only; they must NOT be rejected for missing
+    opposite semantic verification or for the normal hard pivotability gate.
+    """
+    left, right = bridge_surface_pair(b)
+    if not left or not right:
+        return "missing_left_or_right_surface"
+    if lexically_bad_candidate_surface(left):
+        return "lexically_bad_left_surface"
+    if lexically_bad_candidate_surface(right):
+        return "lexically_bad_right_surface"
+    free_for_verb_check = clean(b.get("detached_free_surface", b.get("candidate", right)))
+    verb_reason = detached_low_value_verb_form_reason(free_for_verb_check)
+    if verb_reason:
+        return verb_reason + "_final"
+    commonness_reason = detached_low_commonness_reason(free_for_verb_check)
+    if commonness_reason:
+        return commonness_reason + "_final"
+    shorthand_reason = detached_clipped_or_shorthand_reason(free_for_verb_check)
+    if shorthand_reason:
+        return shorthand_reason + "_final"
+    if surface_key(left) == surface_key(right):
+        return "same_surface_pair"
+    if same_root(left, right):
+        return "same_root_pair"
+    if structurally_trivial_variant(left, right):
+        return "structurally_trivial_pair"
+    if boring_morphophonetic_echo(left, right):
+        return "boring_morphophonetic_echo_pair"
+    if universal_trivial_bridge(left, right):
+        return "universal_trivial_pair"
+
+    phon = float(b.get("phonetic_score", 0.0) or 0.0)
+    if phon < DETACHED_MIN_PHONETIC:
+        return "phonetic_below_detached_min"
+
+    naturalness = float(b.get("naturalness_score", b.get("quality_score", 0.0)) or 0.0)
+    recognizability = max(surface_recognizability_prior(left), surface_recognizability_prior(right))
+    if max(naturalness, recognizability) < DETACHED_MIN_NATURALNESS:
+        return "naturalness_or_recognizability_below_detached_min"
+
+    anchor_sim = float(b.get("detached_anchor_semantic_similarity", 0.0) or 0.0)
+    if anchor_sim >= DETACHED_MAX_ANCHOR_SEMANTIC_SIM:
+        return "semantic_too_close_to_anchor"
+
+    anchor = clean(b.get("detached_anchor_surface", b.get("sound_source", "")))
+    free = clean(b.get("detached_free_surface", b.get("candidate", "")))
+    if anchor and free:
+        if surface_key(anchor) == surface_key(free):
+            return "same_surface_anchor_free"
+        if same_root(anchor, free):
+            return "same_root_anchor_free"
+        if structurally_trivial_variant(anchor, free):
+            return "structurally_trivial_anchor_free"
+        if boring_morphophonetic_echo(anchor, free):
+            return "boring_morphophonetic_echo_anchor_free"
+        if universal_trivial_bridge(anchor, free):
+            return "universal_trivial_anchor_free"
+        echo_reason = detached_orthographic_echo_reason(anchor, free)
+        if echo_reason:
+            return echo_reason + "_final"
+
+    return ""
+
+
+def detached_bridge_is_structurally_valid(b: dict[str, Any]) -> bool:
+    return detached_bridge_final_rejection_reason(b) == ""
+
 def bridge_is_structurally_valid(b: dict[str, Any]) -> bool:
+    if is_detached_bridge(b):
+        return detached_bridge_is_structurally_valid(b)
     left, right = bridge_surface_pair(b)
     sound_source = clean(b.get("sound_source", b.get("source_surface", "")))
     candidate = clean(b.get("candidate", b.get("candidate_surface", "")))
@@ -3422,33 +4530,84 @@ def bridge_is_structurally_valid(b: dict[str, Any]) -> bool:
     return True
 
 
+
+_LAST_FINAL_SANITIZE_DIAGNOSTICS: dict[str, Any] = {}
+
+
 def final_sanitize_bridge_list(bridges: list[dict[str, Any]], limit: int = MAX_BRIDGES) -> list[dict[str, Any]]:
-    """Final no-exceptions bridge guard used by the live server path."""
+    """Final no-exceptions bridge guard used by the live server path.
+
+    v6 adds explicit detached final rejection accounting. Detached bridges are
+    routed through detached_bridge_final_rejection_reason() and never through the
+    normal semantic/pivotability gate.
+    """
+    global _LAST_FINAL_SANITIZE_DIAGNOSTICS
+
     cleaned: list[dict[str, Any]] = []
-    seen_pair_keys: set[tuple[str, str, str, str]] = set()
+    seen_pair_keys: set[str] = set()
     root_counts: dict[str, int] = {}
 
-    for b in sorted(bridges or [], key=lambda x: (affordance_stage_rank(x.get("affordance_stage", ""), x.get("bridge_type", "")), -float(x.get("llm_priority_score", x.get("bridge_score", x.get("score", 0.0))) or 0.0)), reverse=False):
-        if not bridge_is_structurally_valid(b):
-            continue
+    final_diag: dict[str, Any] = {
+        "input_count": int(len(bridges or [])),
+        "detached_input_count": 0,
+        "detached_kept_count": 0,
+        "detached_rejections": {},
+        "detached_rejections_by_bucket": {},
+        "non_detached_rejected_structural": 0,
+        "duplicate_pair_rejections": 0,
+        "root_cap_rejections": 0,
+    }
+
+    def reject_detached(bucket_id: str, reason: str) -> None:
+        totals = final_diag.setdefault("detached_rejections", {})
+        totals[reason] = int(totals.get(reason, 0)) + 1
+        by_bucket = final_diag.setdefault("detached_rejections_by_bucket", {})
+        bstats = by_bucket.setdefault(bucket_id or "unknown", {})
+        bstats[reason] = int(bstats.get(reason, 0)) + 1
+
+    for b in order_bridges_by_retrieval_bucket(bridges or []):
+        detached = is_detached_bridge(b)
+        bucket_id = clean(b.get("retrieval_bucket", ""))
+        if detached:
+            final_diag["detached_input_count"] = int(final_diag.get("detached_input_count", 0)) + 1
+            reason = detached_bridge_final_rejection_reason(b)
+            if reason:
+                reject_detached(bucket_id, reason)
+                continue
+        else:
+            if not bridge_is_structurally_valid(b):
+                final_diag["non_detached_rejected_structural"] = int(final_diag.get("non_detached_rejected_structural", 0)) + 1
+                continue
+
         left, right = bridge_surface_pair(b)
-        left_ipa = clean(b.get("left_ipa", b.get("sound_source_ipa", "")))
-        right_ipa = clean(b.get("right_ipa", b.get("candidate_ipa", "")))
-        key = (surface_key(left), surface_key(right), left_ipa, right_ipa)
+        key = retrieval_pair_key_for_bridge(b)
         if key in seen_pair_keys:
+            if detached:
+                reject_detached(bucket_id, "duplicate_pair_key_final")
+            final_diag["duplicate_pair_rejections"] = int(final_diag.get("duplicate_pair_rejections", 0)) + 1
             continue
 
         # Avoid many variants from one sound family dominating top-k.
         lr = rough_lemma_key(left) or surface_key(left)
         rr = rough_lemma_key(right) or surface_key(right)
         if lr and root_counts.get("L:" + lr, 0) >= MAX_BRIDGES_PER_ROOT:
+            if detached:
+                reject_detached(bucket_id, "left_root_cap_final")
+            final_diag["root_cap_rejections"] = int(final_diag.get("root_cap_rejections", 0)) + 1
             continue
         if rr and root_counts.get("R:" + rr, 0) >= MAX_BRIDGES_PER_ROOT:
+            if detached:
+                reject_detached(bucket_id, "right_root_cap_final")
+            final_diag["root_cap_rejections"] = int(final_diag.get("root_cap_rejections", 0)) + 1
             continue
 
         # Mark the actual hard guard for debugging.
         b = dict(b)
+        b["retrieval_pair_key"] = b.get("retrieval_pair_key") or key
         b["structural_guard_passed"] = True
+        if detached:
+            b["detached_final_guard_passed"] = True
+
         # Backfill naturalness for bridges produced by a pre-hot-reload miner or
         # by phonetic neighbors without source/frequency metadata.
         b["naturalness_score"] = max(
@@ -3477,14 +4636,18 @@ def final_sanitize_bridge_list(bridges: list[dict[str, Any]], limit: int = MAX_B
         )
         cleaned.append(b)
         seen_pair_keys.add(key)
+        if detached:
+            final_diag["detached_kept_count"] = int(final_diag.get("detached_kept_count", 0)) + 1
         if lr:
             root_counts["L:" + lr] = root_counts.get("L:" + lr, 0) + 1
         if rr:
             root_counts["R:" + rr] = root_counts.get("R:" + rr, 0) + 1
         if len(cleaned) >= limit:
             break
-    return cleaned
 
+    final_diag["output_count"] = int(len(cleaned))
+    _LAST_FINAL_SANITIZE_DIAGNOSTICS = final_diag
+    return cleaned
 
 def final_sanitize_phonetic_pool(records: list[dict[str, Any]], probe_field: str = "probe_text", limit: int = PHONETIC_K) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -3512,14 +4675,13 @@ def final_sanitize_pack(pack: dict[str, Any]) -> dict[str, Any]:
 
     This is the safety net that prevents older BridgeMiner internals from leaking
     morphology spam into the server response.  It is deliberately applied in
-    build_row_pack(), so hot reloading retrieval.py changes behavior without
+    build_row_pack(), so hot reloading retrieval_refactored.py changes behavior without
     touching or restarting retrieval_server.py.
     """
     pack = dict(pack)
     old_diag = dict(pack.get("bridge_diagnostics", {}) or {})
     pack["phonetic_A_candidates"] = final_sanitize_phonetic_pool(pack.get("phonetic_A_candidates", []), limit=PHONETIC_K)
     pack["phonetic_B_candidates"] = final_sanitize_phonetic_pool(pack.get("phonetic_B_candidates", []), limit=PHONETIC_K)
-    pack["phonetic_pun_candidates"] = final_sanitize_phonetic_pool(pack.get("phonetic_pun_candidates", []), limit=PHONETIC_K)
 
     bridges = final_sanitize_bridge_list(pack.get("bridge_candidates", []), limit=MAX_BRIDGES)
     pack["bridge_candidates"] = bridges
@@ -3530,6 +4692,19 @@ def final_sanitize_pack(pack: dict[str, Any]) -> dict[str, Any]:
             new_diag[k] = v
     if "stage_times_sec" in old_diag:
         new_diag["stage_times_sec"] = dict(old_diag.get("stage_times_sec") or {})
+    if "retrieval_bucket_order" not in new_diag:
+        new_diag["retrieval_bucket_order"] = list(RETRIEVAL_BUCKET_ORDER)
+    if "retrieval_bucket_regimes" not in new_diag:
+        new_diag["retrieval_bucket_regimes"] = [dict(x) for x in RETRIEVAL_BUCKET_REGIMES]
+    final_sanitize_diag = dict(globals().get("_LAST_FINAL_SANITIZE_DIAGNOSTICS", {}) or {})
+    new_diag["final_sanitize_diagnostics"] = final_sanitize_diag
+    new_diag["detached_final_rejection_totals"] = dict(final_sanitize_diag.get("detached_rejections", {}) or {})
+    new_diag["detached_final_rejections_by_bucket"] = dict(final_sanitize_diag.get("detached_rejections_by_bucket", {}) or {})
+    new_diag["detached_final_input_count"] = int(final_sanitize_diag.get("detached_input_count", 0) or 0)
+    new_diag["detached_final_kept_count"] = int(final_sanitize_diag.get("detached_kept_count", 0) or 0)
+    final_bucket_counts = retrieval_bucket_counts(bridges)
+    new_diag["retrieval_bucket_counts_after_final_sanitize"] = final_bucket_counts
+    new_diag["retrieval_exported_bucket_counts"] = final_bucket_counts
     pack["bridge_diagnostics"] = new_diag
     if bridges and any(bool(b.get("semantic_verified", False)) for b in bridges):
         pack["fallback_level"] = "verified_affordances"
@@ -3544,7 +4719,6 @@ def final_sanitize_pack(pack: dict[str, Any]) -> dict[str, Any]:
         gen["top_bridge_candidates"] = export_bridge_candidates(bridges, MAX_GENERATOR_AFFORDANCES)
         gen["top_phonetic_A"] = pack.get("phonetic_A_candidates", [])[:5]
         gen["top_phonetic_B"] = pack.get("phonetic_B_candidates", [])[:5]
-        gen["top_phonetic_pun_word"] = pack.get("phonetic_pun_candidates", [])[:5]
         gen["fallback_level"] = pack["fallback_level"]
         pack["generator_affordance_pack"] = gen
     return pack
@@ -3577,7 +4751,7 @@ def _get_pipeline(assets: dict[str, Any] | None = None) -> RetrievalPipeline:
     request the server reloads this module, so this function swaps the existing
     instance onto the newly loaded RetrievalPipeline class.  That keeps the heavy
     loaded models/indexes in memory while allowing method/threshold/reranking
-    changes in retrieval.py to take effect without restarting the server.
+    changes in retrieval_refactored.py to take effect without restarting the server.
     """
     if assets is None:
         return RetrievalPipeline()
@@ -3600,7 +4774,7 @@ def _get_pipeline(assets: dict[str, Any] | None = None) -> RetrievalPipeline:
 
     # Critical: hot-swap nested helper objects too.  Otherwise edits to
     # BridgeMiner/PhoneticRetriever methods do not take effect until a server
-    # restart, even though retrieval.py was reloaded.
+    # restart, even though retrieval_refactored.py was reloaded.
     if hasattr(pipeline, "expression"):
         _hot_swap_instance_class(pipeline.expression, ExpressionRetriever)
     if hasattr(pipeline, "phonetic"):
@@ -3767,64 +4941,6 @@ def evaluate_saved_outputs(model: str, start: int, end: int) -> dict[str, Any]:
 
 # Server hot-reload entrypoints.  retrieval_server.py calls these with the
 # persistent ASSETS dict.  These functions never make HTTP calls.
-def retrieve(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    model = clean(payload.get("model", TRANSLATE_MODEL))
-    start = int(payload.get("start", 0))
-    end = int(payload.get("end", start + 1))
-    if end <= start:
-        raise ValueError(f"Invalid range start={start} end={end}")
-
-    row_metrics: list[dict[str, Any]] = []
-    bridge_metrics: list[dict[str, Any]] = []
-    total = end - start
-
-    for n, row_index in enumerate(range(start, end), 1):
-        t0 = time.time()
-        print(f"[retrieve {n}/{total}] row={row_index}", flush=True)
-        pack = build_row_pack(assets, model, row_index)
-        save_row_outputs(model, row_index, pack)
-        diag = pack.get("bridge_diagnostics", {})
-        row_metric = {
-            "row_id": row_index,
-            "bridge_count": int(diag.get("bridge_count", len(pack.get("bridge_candidates", []))) or 0),
-            "strong_bridge_count": int(diag.get("strong_bridge_count", 0) or 0),
-            "identity_bridge_count": int(diag.get("identity_bridge_count", 0) or 0),
-            "trivial_inflection_bridge_count": int(diag.get("trivial_inflection_bridge_count", 0) or 0),
-            "different_surface_bridge_count": int(diag.get("different_surface_bridge_count", 0) or 0),
-            "best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
-            "fallback_level": clean(pack.get("fallback_level", "")),
-            "elapsed_sec": round(time.time() - t0, 3),
-        }
-        for k, v in (diag.get("stage_times_sec", {}) or {}).items():
-            row_metric[f"stage_{k}_sec"] = v
-        row_metrics.append(row_metric)
-        for rank, b in enumerate(pack.get("bridge_candidates", []) or [], 1):
-            left_text, right_text, left_ipa, right_ipa = _bridge_side_fields(b)
-            bridge_metrics.append({
-                "row_id": row_index,
-                "rank": rank,
-                "bridge_type": clean(b.get("bridge_type", b.get("relation", ""))),
-                "left_text": left_text,
-                "right_text": right_text,
-                "left_ipa": left_ipa,
-                "right_ipa": right_ipa,
-                "bridge_score": float(b.get("bridge_score", b.get("score", 0.0)) or 0.0),
-                "phonetic_score": float(b.get("phonetic_score", 0.0) or 0.0),
-                "semantic_A_score": float(b.get("semantic_A_score", b.get("source_semantic_score", 0.0)) or 0.0),
-                "semantic_B_score": float(b.get("semantic_B_score", b.get("opposite_semantic_score", 0.0)) or 0.0),
-                    })
-
-    paths = save_eval_outputs(model, start, end, row_metrics, bridge_metrics)
-    return {
-        "ok": True,
-        "model": model,
-        "start": start,
-        "end": end,
-        "row_count": len(row_metrics),
-        "bridge_count": len(bridge_metrics),
-        "row_metrics": row_metrics,
-        **paths,
-    }
 
 
 def debug_row(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -3834,11 +4950,6 @@ def debug_row(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]
     return {"ok": True, "model": model, "row_index": row_index, "pack": pack}
 
 
-def eval_rows(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    model = clean(payload.get("model", TRANSLATE_MODEL))
-    start = int(payload.get("start", 0))
-    end = int(payload.get("end", start + 1))
-    return evaluate_saved_outputs(model, start, end)
 
 
 # Thin CLI.  When this file is executed directly it only talks to the permanent
@@ -3925,72 +5036,80 @@ def _clear_retrieval_cancel(assets: dict[str, Any] | None) -> None:
 def _prewarm_row_range_retrieval_caches(assets: dict[str, Any] | None, df: pd.DataFrame, row_start: int, row_end: int) -> None:
     """Batch warm caches for a row slice without rebuilding models.
 
-    The permanent server keeps the heavy pipeline in memory, but row-wise code can
-    still become slow if every row separately encodes semantic queries or asks
-    FastText for nearest neighbors.  This prewarm keeps the same retrieval
-    functionality and execution results, but moves the expensive work into
-    bounded batch/cache fills before the per-row loop.
+    This must mirror RetrievalPipeline.retrieve_row(): semantic launch is per
+    French list term, not joined A/B strings.  The same semantic_side_requests()
+    helper is used here and in retrieve_row(), so the cache keys match exactly.
     """
     if assets is None:
         return
     pipe = _get_pipeline(assets)
     rows = df.iloc[row_start:row_end]
 
-    # 1) Batch the three BGE expression queries per row.  This is the main
-    # semantic_search cost on local CPU and should not happen one row at a time.
     semantic_requests: list[tuple[str, int, str]] = []
-    per_row_terms: list[tuple[list[str], list[str], str, str]] = []
+    seen_requests: set[tuple[str, int, str]] = set()
+    per_row_terms: list[tuple[list[str], list[str]]] = []
+
     for _, row in rows.iterrows():
         a_terms, b_terms = side_terms(row)
-        semantic_query = build_semantic_query(row)
-        semantic_A_query = " ".join(a_terms)
-        semantic_B_query = " ".join(b_terms)
-        per_row_terms.append((a_terms, b_terms, semantic_A_query, semantic_B_query))
-        semantic_requests.extend([
-            (semantic_query, SEMANTIC_K, "semantic_blended"),
-            (semantic_A_query, SEMANTIC_K, "semantic_A"),
-            (semantic_B_query, SEMANTIC_K, "semantic_B"),
-        ])
+        per_row_terms.append((a_terms, b_terms))
+        for req in semantic_side_requests(a_terms, "A", SEMANTIC_K) + semantic_side_requests(b_terms, "B", SEMANTIC_K):
+            if req in seen_requests:
+                continue
+            seen_requests.add(req)
+            semantic_requests.append(req)
 
+    semantic_many: dict[str, list[dict[str, Any]]] = {}
     if semantic_requests:
         t = time.time()
-        print(f"[retrieve rows={row_start}:{row_end}] prewarm semantic searches={len(semantic_requests)}", flush=True)
-        # semantic_search_many deduplicates/caches internally and encodes missing
-        # queries in one model batch.
-        pipe.expression.semantic_search_many(semantic_requests)
-        print(f"[retrieve rows={row_start}:{row_end}] prewarm semantic done elapsed={time.time()-t:.2f}s", flush=True)
+        print(
+            f"[retrieve rows={row_start}:{row_end}] "
+            f"prewarm semantic term searches={len(semantic_requests)}",
+            flush=True,
+        )
+        semantic_many = pipe.expression.semantic_search_many(semantic_requests)
+        print(
+            f"[retrieve rows={row_start}:{row_end}] "
+            f"prewarm semantic done elapsed={time.time()-t:.2f}s",
+            flush=True,
+        )
 
-    # 2) Warm FastText only if it is already loaded/enabled.  This preserves the
-    # FastText branch but prevents the first few rows from paying all token-neighbor
-    # costs in the inner loop.  Use cached semantic results to mirror the actual
-    # expand_side_from_precomputed seed pools.
+    # Warm FastText only if it is already loaded/enabled.  Use the same per-term
+    # semantic cache entries as retrieve_row(), not obsolete joined A/B queries.
     ft = getattr(pipe, "fasttext", None)
     if ft is not None and getattr(ft, "enabled", False):
         seed_terms: list[str] = []
-        for a_terms, b_terms, semantic_A_query, semantic_B_query in per_row_terms:
+        for a_terms, b_terms in per_row_terms:
             seed_terms.extend(a_terms)
             seed_terms.extend(b_terms)
-            # Pull cached semantic results; this should not encode again after prewarm.
-            sem_a = pipe.expression.semantic_search(semantic_A_query, top_k=SEMANTIC_K, channel="semantic_A") if semantic_A_query else []
-            sem_b = pipe.expression.semantic_search(semantic_B_query, top_k=SEMANTIC_K, channel="semantic_B") if semantic_B_query else []
+
+            a_reqs = semantic_side_requests(a_terms, "A", SEMANTIC_K)
+            b_reqs = semantic_side_requests(b_terms, "B", SEMANTIC_K)
+            # semantic_many already contains uncached results from the prewarm call;
+            # if a request was already cached before this run, semantic_search_many
+            # also returned it above.  Fall back to cached lookup only defensively.
+            if not all(channel in semantic_many for _, _, channel in a_reqs + b_reqs):
+                semantic_many.update(pipe.expression.semantic_search_many(a_reqs + b_reqs))
+
+            sem_a = merge_semantic_side_results(semantic_many, [channel for _, _, channel in a_reqs])
+            sem_b = merge_semantic_side_results(semantic_many, [channel for _, _, channel in b_reqs])
             seed_terms.extend([clean(x.get("surface", "")) for x in sem_a[:8]])
             seed_terms.extend([clean(x.get("surface", "")) for x in sem_b[:8]])
+
         seed_terms = unique_keep_order([x for x in seed_terms if clean(x)], limit=512)
         if seed_terms:
             t = time.time()
             print(f"[retrieve rows={row_start}:{row_end}] prewarm fasttext seeds={len(seed_terms)}", flush=True)
-            # Expand in deterministic chunks so one huge seed list does not create
-            # an unbounded bridge candidate set.  Results are cached by FastText backend.
             for i in range(0, len(seed_terms), max(1, FASTTEXT_SEED_LIMIT)):
                 ft.expand(seed_terms[i:i + FASTTEXT_SEED_LIMIT], side="prewarm", level=1, limit=FASTTEXT_MAX_CANDIDATES_PER_SIDE)
             print(f"[retrieve rows={row_start}:{row_end}] prewarm fasttext done elapsed={time.time()-t:.2f}s", flush=True)
 
 def build_and_save_retrieval_rows(assets: dict[str, Any] | None, model: str, row_start: int, row_end: int) -> dict[str, Any]:
-    """Process an explicit row slice and save one retrieval TSV.
+    """Process an explicit row range and save normal chunk TSV outputs.
 
-    This matches the user's mental model: start/end are row indices.
-    Exact 100-row chunks still write 0.tsv, 1.tsv, ... so the output format
-    stays compatible with the rest of the pipeline.
+    start/end are row indices.  A range may cross 100-row chunk boundaries;
+    this function splits it into chunk-local slices and writes the normal
+    retrieval/{model}/{chunk_index}.tsv files for each touched chunk.  For
+    example, rows 0:500 write 0.tsv, 1.tsv, 2.tsv, 3.tsv, and 4.tsv.
     """
     df = _get_dataset_cached(assets, model)
     validate_input(df)
@@ -3998,60 +5117,92 @@ def build_and_save_retrieval_rows(assets: dict[str, Any] | None, model: str, row
     row_end = len(df) if int(row_end) == -1 else min(len(df), int(row_end))
     if row_end <= row_start:
         raise ValueError(f"Invalid row range start={row_start} end={row_end}")
-    if (row_end - 1) // CHUNK_SIZE != row_start // CHUNK_SIZE:
-        raise ValueError(
-            f"Row range {row_start}:{row_end} crosses chunk boundary. "
-            "Use retrieve_chunks for multi-chunk production runs, or choose a row range within one 100-row chunk."
-        )
-    chunk = df.iloc[row_start:row_end].copy()
-    out_path = _row_range_output_path(model, row_start, row_end)
-    _ensure_dir(out_path.parent)
 
-    _prewarm_row_range_retrieval_caches(assets, df, row_start, row_end)
+    def run_one_chunk_slice(slice_start: int, slice_end: int) -> dict[str, Any]:
+        if (slice_end - 1) // CHUNK_SIZE != slice_start // CHUNK_SIZE:
+            raise ValueError(f"Internal error: row slice {slice_start}:{slice_end} crosses chunk boundary")
 
-    retrieval_cols: list[dict[str, Any]] = []
-    bridge_metrics: list[dict[str, Any]] = []
+        chunk = df.iloc[slice_start:slice_end].copy()
+        out_path = _row_range_output_path(model, slice_start, slice_end)
+        _ensure_dir(out_path.parent)
+
+        _prewarm_row_range_retrieval_caches(assets, df, slice_start, slice_end)
+
+        retrieval_cols: list[dict[str, Any]] = []
+        bridge_metrics: list[dict[str, Any]] = []
+        t_slice = time.time()
+        cancelled = False
+        for local_i, (row_index, row) in enumerate(chunk.iterrows(), 1):
+            if _retrieval_cancel_requested(assets):
+                cancelled = True
+                print(f"[retrieve rows={slice_start}:{slice_end}] cancel requested before row={row_index}; saving partial output", flush=True)
+                break
+            t0 = time.time()
+            print(f"[retrieve rows={slice_start}:{slice_end} {local_i}/{len(chunk)}] row={row_index}", flush=True)
+            pack = build_row_pack(assets, model, int(row_index))
+            diag = pack.get("bridge_diagnostics", {}) or {}
+            stage = diag.get("stage_times_sec", {}) or {}
+            print(
+                f"[retrieve rows={slice_start}:{slice_end} {local_i}/{len(chunk)}] done row={row_index} "
+                f"bridges={int(diag.get('bridge_count', len(pack.get('bridge_candidates', []) or [])) or 0)} "
+                f"elapsed={time.time() - t0:.2f}s bridge_mining={float(stage.get('bridge_mining', 0.0) or 0.0):.3f}s",
+                flush=True,
+            )
+            retrieval_cols.append(_retrieval_columns_from_pack(pack))
+            for rank, b in enumerate(pack.get("bridge_candidates", []) or [], 1):
+                bridge_metrics.append(_compact_bridge_metric(int(row_index), rank, b))
+            if _retrieval_cancel_requested(assets):
+                cancelled = True
+                print(f"[retrieve rows={slice_start}:{slice_end}] cancel requested after row={row_index}; saving partial output", flush=True)
+                break
+
+        processed_count = len(retrieval_cols)
+        if retrieval_cols:
+            chunk_out = pd.concat([chunk.iloc[:processed_count].reset_index(drop=True), pd.DataFrame(retrieval_cols)], axis=1)
+        else:
+            chunk_out = chunk.iloc[:0].copy()
+        save(chunk_out, str(out_path))
+        return {
+            "ok": True,
+            "cancelled": bool(cancelled),
+            "model": model,
+            "row_start": int(slice_start),
+            "row_end": int(slice_end),
+            "row_count": int(len(chunk_out)),
+            "bridge_count": int(len(bridge_metrics)),
+            "rows_path": str(out_path),
+            "elapsed_sec": round(time.time() - t_slice, 3),
+        }
+
     t_all = time.time()
-    cancelled = False
-    for local_i, (row_index, row) in enumerate(chunk.iterrows(), 1):
-        if _retrieval_cancel_requested(assets):
-            cancelled = True
-            print(f"[retrieve rows={row_start}:{row_end}] cancel requested before row={row_index}; saving partial output", flush=True)
-            break
-        t0 = time.time()
-        print(f"[retrieve rows={row_start}:{row_end} {local_i}/{len(chunk)}] row={row_index}", flush=True)
-        pack = build_row_pack(assets, model, int(row_index))
-        diag = pack.get("bridge_diagnostics", {}) or {}
-        stage = diag.get("stage_times_sec", {}) or {}
-        print(
-            f"[retrieve rows={row_start}:{row_end} {local_i}/{len(chunk)}] done row={row_index} "
-            f"bridges={int(diag.get('bridge_count', len(pack.get('bridge_candidates', []) or [])) or 0)} "
-            f"elapsed={time.time() - t0:.2f}s bridge_mining={float(stage.get('bridge_mining', 0.0) or 0.0):.3f}s",
-            flush=True,
-        )
-        retrieval_cols.append(_retrieval_columns_from_pack(pack))
-        for rank, b in enumerate(pack.get("bridge_candidates", []) or [], 1):
-            bridge_metrics.append(_compact_bridge_metric(int(row_index), rank, b))
-        if _retrieval_cancel_requested(assets):
-            cancelled = True
-            print(f"[retrieve rows={row_start}:{row_end}] cancel requested after row={row_index}; saving partial output", flush=True)
+    results: list[dict[str, Any]] = []
+    current = row_start
+    while current < row_end:
+        slice_end = min(row_end, ((current // CHUNK_SIZE) + 1) * CHUNK_SIZE)
+        result = run_one_chunk_slice(current, slice_end)
+        results.append(result)
+        current = slice_end
+        if result.get("cancelled") or _retrieval_cancel_requested(assets):
             break
 
-    processed_count = len(retrieval_cols)
-    if retrieval_cols:
-        chunk = pd.concat([chunk.iloc[:processed_count].reset_index(drop=True), pd.DataFrame(retrieval_cols)], axis=1)
-    else:
-        chunk = chunk.iloc[:0].copy()
-    save(chunk, str(out_path))
+    if len(results) == 1:
+        single = dict(results[0])
+        single["chunk_results"] = results
+        single["chunk_paths"] = [single.get("rows_path", "")]
+        single["elapsed_sec"] = round(time.time() - t_all, 3)
+        return single
+
     return {
         "ok": True,
-        "cancelled": bool(cancelled),
+        "cancelled": any(bool(r.get("cancelled")) for r in results),
         "model": model,
         "row_start": int(row_start),
         "row_end": int(row_end),
-        "row_count": int(len(chunk)),
-        "bridge_count": int(len(bridge_metrics)),
-        "rows_path": str(out_path),
+        "row_count": int(sum(int(r.get("row_count", 0) or 0) for r in results)),
+        "bridge_count": int(sum(int(r.get("bridge_count", 0) or 0) for r in results)),
+        "rows_path": str(_retrieval_output_dir(model)),
+        "chunk_paths": [str(r.get("rows_path", "")) for r in results],
+        "chunk_results": results,
         "elapsed_sec": round(time.time() - t_all, 3),
     }
 
@@ -4076,75 +5227,6 @@ def retrieve_rows(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, 
             _clear_retrieval_cancel(assets)
             _clear_retrieval_cancel(assets)
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        raise SystemExit(
-            "Usage:\n"
-            "  python retrieval.py status\n"
-            "  python retrieval.py cancel\n"
-            "  python retrieval.py debug_row gemini 0\n"
-            "  python retrieval.py retrieve gemini 0 100\n"
-            "  python retrieval.py eval gemini 0 100"
-        )
-    task = sys.argv[1]
-    if task == "status":
-        print(json.dumps(_http_get("/status"), ensure_ascii=False, indent=2))
-        return
-    if task == "debug_row":
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        row_index = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        print(json.dumps(_http_post("/debug_row", {"model": model, "row_index": row_index}), ensure_ascii=False, indent=2))
-        return
-    if task == "cancel":
-        print(json.dumps(_http_post("/cancel", {}), ensure_ascii=False, indent=2))
-        return
-    if task == "retrieve":
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        end = int(sys.argv[4]) if len(sys.argv) > 4 else start + 1
-        server = os.environ.get('RETRIEVAL_SERVER_URL', 'http://127.0.0.1:8765')
-        total = end - start
-        print(f"retrieve model={model} rows={start}:{end} server={server}", flush=True)
-        all_rows = 0
-        all_bridges = 0
-        t_batch = time.time()
-        for n, row_index in enumerate(range(start, end), 1):
-            t0 = time.time()
-            print(f"[{n}/{total}] starting row={row_index}", flush=True)
-            out = _http_post("/retrieve", {"model": model, "start": row_index, "end": row_index + 1})
-            all_rows += int(out.get("row_count", 0) or 0)
-            all_bridges += int(out.get("bridge_count", 0) or 0)
-            row_metrics = out.get("row_metrics") or []
-            stage_msg = ""
-            if row_metrics:
-                rm = row_metrics[0]
-                stages = []
-                for key in sorted(k for k in rm if k.startswith("stage_") and k.endswith("_sec")):
-                    name = key[len("stage_"):-len("_sec")]
-                    stages.append(f"{name}={rm[key]}s")
-                if stages:
-                    stage_msg = " | " + ", ".join(stages)
-            print(
-                f"[{n}/{total}] done row={row_index} "
-                f"bridges={out.get('bridge_count', '?')} "
-                f"elapsed={time.time() - t0:.1f}s"
-                f"{stage_msg}",
-                flush=True,
-            )
-        # Build a range summary from saved compact packs. This is fast and does not rerun retrieval.
-        summary = _http_post("/eval", {"model": model, "start": start, "end": end})
-        summary["client_total_elapsed_sec"] = round(time.time() - t_batch, 3)
-        summary["client_rows_seen"] = all_rows
-        summary["client_bridges_seen"] = all_bridges
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        return
-    if task == "eval":
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        end = int(sys.argv[4]) if len(sys.argv) > 4 else start + 1
-        print(json.dumps(_http_post("/eval", {"model": model, "start": start, "end": end}), ensure_ascii=False, indent=2))
-        return
-    raise SystemExit(f"Unknown task: {task}")
 
 
 
@@ -4209,51 +5291,6 @@ def _compact_bridge_metric(row_index: int, rank: int, b: dict[str, Any]) -> dict
     }
 
 
-def _retrieval_columns_from_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    compact = compact_retrieval_pack(pack)
-    diag = pack.get("bridge_diagnostics", {}) or {}
-    # Primary affordances are the diversified bridge suggestions.  The LLM judge
-    # can later use llm_judge_candidates, but retrieval itself should expose the
-    # full small menu, not one winner.
-    candidates = compact.get("top_bridge_candidates", []) or compact.get("llm_judge_candidates", []) or []
-    top_bridges = compact.get("top_bridge_candidates", []) or []
-    semantic_a = compact.get("top_semantic_A", []) or []
-    semantic_b = compact.get("top_semantic_B", []) or []
-    phon_a = compact.get("top_phonetic_A", []) or []
-    phon_b = compact.get("top_phonetic_B", []) or []
-    stage_times = diag.get("stage_times_sec", {}) or {}
-
-    return {
-        # Primary generator-facing payload: concise affordances only.
-        "retrieval_affordances_json": _safe_json_for_tsv(candidates),
-        # Full compact context for generator variants that want expressions too.
-        # This is compact; full debug packs are only written when RETRIEVAL_SAVE_TRACES=1.
-        "retrieval_context_json": _safe_json_for_tsv(compact),
-        "retrieval_affordance_buckets_json": _safe_json_for_tsv(compact.get("affordance_buckets", {})),
-        # Optional inspection/helper columns.
-        "retrieval_top_bridges_json": _safe_json_for_tsv(top_bridges),
-        "retrieval_semantic_A_json": _safe_json_for_tsv(semantic_a),
-        "retrieval_semantic_B_json": _safe_json_for_tsv(semantic_b),
-        "retrieval_phonetic_A_json": _safe_json_for_tsv(phon_a),
-        "retrieval_phonetic_B_json": _safe_json_for_tsv(phon_b),
-        "retrieval_stage_times_json": _safe_json_for_tsv(stage_times),
-        # Scalar diagnostics.
-        "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
-        "retrieval_bridge_count": int(diag.get("bridge_count", len(pack.get("bridge_candidates", []))) or 0),
-        "retrieval_affordance_count": int(len(candidates)),
-        "retrieval_strong_bridge_count": int(diag.get("strong_bridge_count", 0) or 0),
-        "retrieval_identity_bridge_count": int(diag.get("identity_bridge_count", 0) or 0),
-        "retrieval_trivial_inflection_bridge_count": int(diag.get("trivial_inflection_bridge_count", 0) or 0),
-        "retrieval_different_surface_bridge_count": int(diag.get("different_surface_bridge_count", 0) or 0),
-        "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
-        "retrieval_semantic_count": int(len(pack.get("semantic_expressions", []) or [])),
-        "retrieval_lexical_count": int(len(pack.get("lexical_expressions", []) or [])),
-        "retrieval_phonetic_count": int(
-            len(pack.get("phonetic_A_candidates", []) or [])
-            + len(pack.get("phonetic_B_candidates", []) or [])
-            + len(pack.get("phonetic_pun_candidates", []) or [])
-        ),
-    }
 
 
 def build_and_save_retrieval_chunk(assets: dict[str, Any] | None, model: str, chunk_index: int) -> dict[str, Any]:
@@ -4354,7 +5391,7 @@ def retrieve(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     """Server entrypoint.
 
     Default behavior: start/end are ROW indices.  This is what the CLI command
-    `python retrieval.py retrieve gemini 0 10` means.
+    `python retrieval_refactored.py retrieve gemini 0 10` means.
 
     Chunk mode is explicit only: pass mode=chunks or chunk_start/chunk_end.
     This preserves normal pipeline files like retrieval/{model}/0.tsv while
@@ -4398,7 +5435,7 @@ def retrieve(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     if MAX_CHUNKS_PER_CALL > 0 and chunk_count > MAX_CHUNKS_PER_CALL and not force:
         raise RuntimeError(
             f"Refusing to process {chunk_count} chunks ({chunk_count * CHUNK_SIZE} nominal rows) in one dev call. "
-            f"Run one chunk at a time, e.g. `python retrieval.py retrieve {model} {chunk_start} {chunk_start + 1}`, "
+            f"Run one chunk at a time, e.g. `python retrieval_refactored.py retrieve {model} {chunk_start} {chunk_start + 1}`, "
             "or set RETRIEVAL_MAX_CHUNKS_PER_CALL=0 / pass force=true for production."
         )
 
@@ -4477,98 +5514,14 @@ def eval_rows(assets: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        raise SystemExit(
-            "Usage:\n"
-            "  python retrieval.py status\n"
-            "  python retrieval.py cancel\n"
-            "  python retrieval.py debug_row gemini 0\n"
-            "  python retrieval.py retrieve gemini 0 10        # ROW indices; writes 0.tsv\n"
-            "  python retrieval.py retrieve gemini 0 100       # ROW indices; writes 0.tsv\n"
-            "  python retrieval.py retrieve_chunks gemini 0 1 # chunk indices; writes 0.tsv\n"
-            "  python retrieval.py eval gemini 0 1            # chunk summary\n"
-        )
-    task = sys.argv[1]
-    if task == "status":
-        print(json.dumps(_http_get("/status"), ensure_ascii=False, indent=2))
-        return
-    if task == "debug_row":
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        row_index = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        print(json.dumps(_http_post("/debug_row", {"model": model, "row_index": row_index}), ensure_ascii=False, indent=2))
-        return
-    if task == "cancel":
-        print(json.dumps(_http_post("/cancel", {}), ensure_ascii=False, indent=2))
-        return
-    if task == "retrieve":
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        row_start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        row_end = int(sys.argv[4]) if len(sys.argv) > 4 else row_start + 10
-        server = os.environ.get("RETRIEVAL_SERVER_URL", "http://127.0.0.1:8765")
-        print(f"retrieve model={model} rows={row_start}:{row_end} server={server}", flush=True)
-        t0 = time.time()
-        summary = _http_post("/retrieve", {
-            "model": model,
-            "mode": "rows",
-            "row_start": row_start,
-            "row_end": row_end,
-        })
-        summary["client_total_elapsed_sec"] = round(time.time() - t0, 3)
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        return
-    if task == "retrieve_chunks":
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        chunk_start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        chunk_end = int(sys.argv[4]) if len(sys.argv) > 4 else chunk_start + 1
-        server = os.environ.get("RETRIEVAL_SERVER_URL", "http://127.0.0.1:8765")
-        nominal_rows = "all remaining" if chunk_end == -1 else str(max(0, chunk_end - chunk_start) * CHUNK_SIZE)
-        print(f"retrieve_chunks model={model} chunks={chunk_start}:{chunk_end} (~{nominal_rows} rows) server={server}", flush=True)
-        if chunk_end != -1 and chunk_end - chunk_start > 1 and MAX_CHUNKS_PER_CALL > 0:
-            print(
-                f"Refusing multi-chunk dev call by default. Use `python retrieval.py retrieve_chunks {model} {chunk_start} {chunk_start + 1}` "
-                "or set RETRIEVAL_MAX_CHUNKS_PER_CALL=0 for production.",
-                flush=True,
-            )
-            raise SystemExit(2)
-        t0 = time.time()
-        summary = _http_post("/retrieve", {
-            "model": model,
-            "mode": "chunks",
-            "chunk_start": chunk_start,
-            "chunk_end": chunk_end,
-        })
-        summary["client_total_elapsed_sec"] = round(time.time() - t0, 3)
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        return
-    if task == "retrieve_rows":
-        # Backward-compatible alias; prefer `retrieve`.
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        row_start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        row_end = int(sys.argv[4]) if len(sys.argv) > 4 else row_start + 10
-        print(f"retrieve_rows model={model} rows={row_start}:{row_end}", flush=True)
-        t0 = time.time()
-        summary = _http_post("/retrieve", {"model": model, "mode": "rows", "row_start": row_start, "row_end": row_end})
-        summary["client_total_elapsed_sec"] = round(time.time() - t0, 3)
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        return
-    if task == "eval":
-        model = sys.argv[2] if len(sys.argv) > 2 else TRANSLATE_MODEL
-        chunk_start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        chunk_end = int(sys.argv[4]) if len(sys.argv) > 4 else chunk_start + 1
-        print(json.dumps(_http_post("/eval", {"model": model, "mode": "chunks", "chunk_start": chunk_start, "chunk_end": chunk_end}), ensure_ascii=False, indent=2))
-        return
-    raise SystemExit(f"Unknown task: {task}")
 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override: phrase-level affordances + generator-ready retrieval columns
 # ─────────────────────────────────────────────────────────────────────────────
 # This section intentionally lives at the end so hot-reload uses these functions
 # without changing retrieval_server.py or reloading model/index assets.
 
-_BASE_COMPACT_RETRIEVAL_PACK_V11 = compact_retrieval_pack
 
 _BAD_PHRASE_EDGES = {
     "de", "du", "des", "le", "la", "les", "un", "une", "à", "au", "aux",
@@ -4651,52 +5604,13 @@ def _phrase_level_affordances_from_pack(pack: dict[str, Any], limit: int = 8) ->
     return rows[:limit]
 
 
-def compact_retrieval_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    gen = _BASE_COMPACT_RETRIEVAL_PACK_V11(pack)
-    phrases = _phrase_level_affordances_from_pack(pack, limit=8)
-    gen["phrase_level_affordances"] = phrases
-    return gen
 
 
-def _retrieval_columns_from_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    compact = compact_retrieval_pack(pack)
-    diag = pack.get("bridge_diagnostics", {}) or {}
-    candidates = compact.get("top_bridge_candidates", []) or compact.get("llm_judge_candidates", []) or []
-    phrases = compact.get("phrase_level_affordances", []) or []
-    top_bridges = compact.get("top_bridge_candidates", []) or []
-    semantic_a = compact.get("top_semantic_A", []) or []
-    semantic_b = compact.get("top_semantic_B", []) or []
-    phon_a = compact.get("top_phonetic_A", []) or []
-    phon_b = compact.get("top_phonetic_B", []) or []
-    stage_times = diag.get("stage_times_sec", {}) or {}
-
-    generator_ideas = [compact_generator_idea(c) for c in candidates]
-    # Phrase semantic hits are internal context until they form a real two-surface pun idea.
-    # Do not export empty left/right placeholder objects.
-    phrase_ideas: list[dict[str, Any]] = []
-
-    return {
-        "retrieval_affordances_json": _safe_json_for_tsv([x for x in generator_ideas if x]),
-        "retrieval_phrase_affordances_json": _safe_json_for_tsv(phrase_ideas),
-        "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
-        "retrieval_bridge_count": int(diag.get("bridge_count", len(pack.get("bridge_candidates", []))) or 0),
-        "retrieval_affordance_count": int(len([x for x in generator_ideas if x])),
-        "retrieval_phrase_affordance_count": int(len(phrase_ideas)),
-        "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
-        "retrieval_semantic_count": int(len(pack.get("semantic_expressions", []) or [])),
-        "retrieval_lexical_count": int(len(pack.get("lexical_expressions", []) or [])),
-        "retrieval_phonetic_count": int(
-            len(pack.get("phonetic_A_candidates", []) or [])
-            + len(pack.get("phonetic_B_candidates", []) or [])
-            + len(pack.get("phonetic_pun_candidates", []) or [])
-        ),
-    }
 
 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v15: generator-facing retrieval only; real surface-pair ideas.
 # ─────────────────────────────────────────────────────────────────────────────
 # This override intentionally removes fake phrase placeholders and any verbose
 # debug payload from the default TSV output. Phrase-level now means: an actual
@@ -4710,142 +5624,18 @@ def _is_real_phrase_pair_idea(b: dict[str, Any]) -> bool:
 
 
 
-def _is_low_leap_bridge(b: dict[str, Any]) -> bool:
-    marker = " ".join([
-        clean(b.get("bridge_type", "")),
-        clean(b.get("relation", "")),
-        clean(b.get("semantic_relation", "")),
-        clean(b.get("affordance_stage", "")),
-    ]).lower()
-    return "low_leap" in marker
-
-def score_profile_for_generator(b: dict[str, Any]) -> dict[str, float]:
-    """Self-documenting generator-facing score profile.
-
-    These are the approved retrieval dimensions plus the missing core signal:
-    whether the surface pair is usable as a pun pivot. No debug scores.
-    """
-    surfaces = [x for x in bridge_surface_pair(b) if clean(x)]
-    phonetic_match = clamp01(b.get("phonetic_score", 0.0))
-    french_naturalness = max(
-        [clamp01(b.get("naturalness_score", b.get("quality_score", 0.0)))]
-        + [surface_naturalness_score(x) for x in surfaces]
-    ) if surfaces else clamp01(b.get("naturalness_score", b.get("quality_score", 0.0)))
-    semantic_surprise = clamp01(b.get("surprise_score", 0.0))
-    english_meaning_similarity = max(
-        clamp01(b.get("source_semantic_score", 0.0)),
-        clamp01(b.get("opposite_semantic_score", 0.0)),
-        clamp01(b.get("semantic_A_score", 0.0)),
-        clamp01(b.get("semantic_B_score", 0.0)),
-    )
-    pun_pivot_usability = max(
-        clamp01(b.get("pivotability_score", 0.0)),
-        bridge_pivotability_score(b),
-    )
-    if _is_low_leap_bridge(b):
-        # Low-style compensation candidates deliberately move away from the
-        # English semantic range.  English similarity is reported but must not
-        # decide export or ranking for these candidates.
-        overall_score = clamp01(
-            0.34 * phonetic_match
-            + 0.26 * french_naturalness
-            + 0.22 * pun_pivot_usability
-            + 0.18 * semantic_surprise
-        )
-    else:
-        overall_score = clamp01(
-            0.30 * phonetic_match
-            + 0.22 * french_naturalness
-            + 0.18 * semantic_surprise
-            + 0.18 * pun_pivot_usability
-            + 0.12 * english_meaning_similarity
-        )
-    return {
-        "phonetic_match": round(float(phonetic_match), 4),
-        "french_naturalness": round(float(french_naturalness), 4),
-        "semantic_surprise": round(float(semantic_surprise), 4),
-        "english_meaning_similarity": round(float(english_meaning_similarity), 4),
-        "pun_pivot_usability": round(float(pun_pivot_usability), 4),
-        "overall_score": round(float(overall_score), 4),
-    }
 
 
-def compact_generator_idea(b: dict[str, Any]) -> dict[str, Any]:
-    """Minimal generator-facing idea: surface pair + sound relation + scores."""
-    left, right = bridge_surface_pair(b)
-    left = clean(left)
-    right = clean(right)
-    if not left or not right:
-        return {}
-    relation_raw = clean(b.get("phonetic_relation") or b.get("relation") or b.get("bridge_type") or "")
-    if relation_raw in {"exact_or_near_homophone", "different_surface_homophone_bridge", "expansion_homophone_needs_judge"} or "homophone" in relation_raw:
-        relation = "same_sound"
-    else:
-        relation = "similar_sound"
-    return {
-        "left": left,
-        "right": right,
-        "relation": relation,
-        "scores": score_profile_for_generator(b),
-    }
 
 
-def _candidate_passes_generator_floor(b: dict[str, Any]) -> bool:
-    """Last cheap floor before writing generator-facing ideas."""
-    idea = compact_generator_idea(b)
-    if not idea:
-        return False
-    scores = idea.get("scores", {}) or {}
-    # Preserve exact strong sound collisions, but require real pivot usability.
-    if scores.get("phonetic_match", 0.0) >= 0.96:
-        return scores.get("french_naturalness", 0.0) >= 0.28 and scores.get("pun_pivot_usability", 0.0) >= 0.25
-    return (
-        scores.get("phonetic_match", 0.0) >= 0.78
-        and scores.get("french_naturalness", 0.0) >= 0.30
-        and scores.get("pun_pivot_usability", 0.0) >= 0.30
-    )
 
 
-def _dedupe_generator_ideas(ideas: list[dict[str, Any]], limit: int = MAX_GENERATOR_AFFORDANCES) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str, str]] = set()
-    out: list[dict[str, Any]] = []
-    def key_score(x: dict[str, Any]) -> float:
-        s = x.get("scores", {}) or {}
-        return float(s.get("overall_score", 0.0) or 0.0)
-    for idea in sorted([x for x in ideas if x], key=key_score, reverse=True):
-        k = (strip_accents(idea.get("left", "")), strip_accents(idea.get("right", "")), clean(idea.get("relation", "")))
-        rk = (k[1], k[0], k[2])
-        if k in seen or rk in seen:
-            continue
-        seen.add(k)
-        out.append(idea)
-        if len(out) >= limit:
-            break
-    return out
 
 
-def _retrieval_columns_from_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    compact = compact_retrieval_pack(pack)
-    diag = pack.get("bridge_diagnostics", {}) or {}
-    candidates = compact.get("top_bridge_candidates", []) or compact.get("llm_judge_candidates", []) or []
-    ideas = _dedupe_generator_ideas(
-        [compact_generator_idea(c) for c in candidates if _candidate_passes_generator_floor(c)],
-        limit=MAX_GENERATOR_AFFORDANCES,
-    )
-    out = {
-        "retrieval_affordances_json": _safe_json_for_tsv(ideas),
-        "retrieval_affordance_count": int(len(ideas)),
-        "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
-        "retrieval_bridge_count": int(diag.get("bridge_count", len(pack.get("bridge_candidates", []))) or 0),
-        "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
-    }
-    if RETRIEVAL_DEBUG_PACKS:
-        out["retrieval_debug_json"] = _safe_json_for_tsv(compact)
-    return out
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v16: stronger pivot scoring, real phrase-pair only, clean output.
 # ─────────────────────────────────────────────────────────────────────────────
 # Generator-facing output remains compact. Internal fields may be computed, but
 # the TSV default only writes concrete surface-pair ideas and approved scores.
@@ -4869,62 +5659,8 @@ _WEAK_PIVOT_OVERRIDES = {
 }
 
 
-def surface_pivotability(surface: Any) -> float:
-    """How usable this French surface is as an actual pun pivot.
-
-    This is stricter than recognizability. A word can be common and still be a
-    poor joke pivot if it is mostly a support/function form or cannot naturally
-    carry a sentence reinterpretation.
-    """
-    s = norm_text(surface)
-    plain = strip_accents(s)
-    if not s or lexically_bad_candidate_surface(s):
-        return 0.0
-    if s in _BAD_LOW_VALUE_PUN_PIVOTS or plain in {strip_accents(x) for x in _BAD_LOW_VALUE_PUN_PIVOTS}:
-        return 0.0
-    if s in _WEAK_PIVOT_OVERRIDES:
-        return clamp01(_WEAK_PIVOT_OVERRIDES[s])
-    if plain in _WEAK_PIVOT_OVERRIDES:
-        return clamp01(_WEAK_PIVOT_OVERRIDES[plain])
-    if s in _STRONG_PIVOT_OVERRIDES:
-        return clamp01(_STRONG_PIVOT_OVERRIDES[s])
-    if plain in _STRONG_PIVOT_OVERRIDES:
-        return clamp01(_STRONG_PIVOT_OVERRIDES[plain])
-    if s in _LOW_PIVOT_FUNCTION_SURFACES or plain in {strip_accents(x) for x in _LOW_PIVOT_FUNCTION_SURFACES}:
-        return 0.04
-
-    words = [w for w in s.split() if w]
-    wc = len(words)
-    score = 0.0
-    if 2 <= wc <= 4:
-        if all(w not in _LOW_PIVOT_FUNCTION_SURFACES for w in words):
-            score += 0.48
-        else:
-            score += 0.22
-    elif re.fullmatch(r"[a-zàâçéèêëîïôûùüÿñæœ'-]{4,10}", s, flags=re.I):
-        score += 0.36
-    elif re.fullmatch(r"[a-zàâçéèêëîïôûùüÿñæœ'-]{3}", s, flags=re.I):
-        score += 0.16
-
-    if plain.endswith(_HIGH_PIVOT_NOUNISH_SUFFIXES):
-        score += 0.10
-    # Infinitives can be useful, but many are weak sentence pivots without a
-    # stronger counterpart; keep them below noun-like pivots by default.
-    if re.search(r"(er|ir|re)$", plain) and wc == 1:
-        score -= 0.10
-    if len(plain) <= 3 and s not in _STRONG_PIVOT_OVERRIDES:
-        score -= 0.12
-    return clamp01(score)
 
 
-def surface_naturalness_score(surface: Any) -> float:
-    """Ordinary/native French recognizability for generator-facing scoring."""
-    s = norm_text(surface)
-    if not s:
-        return 0.0
-    if s in _BAD_LOW_VALUE_PUN_PIVOTS or strip_accents(s) in {strip_accents(x) for x in _BAD_LOW_VALUE_PUN_PIVOTS}:
-        return 0.0
-    return clamp01(max(surface_recognizability_prior(s), surface_pivotability(s)))
 
 
 def bridge_pivotability_score(b: dict[str, Any]) -> float:
@@ -4971,7 +5707,7 @@ def score_profile_for_generator(b: dict[str, Any]) -> dict[str, float]:
         + [surface_naturalness_score(x) for x in surfaces]
     ) if surfaces else clamp01(b.get("naturalness_score", b.get("quality_score", 0.0)))
     semantic_surprise = clamp01(b.get("surprise_score", 0.0))
-    english_meaning_similarity = max(
+    semantic_domain_similarity = max(
         clamp01(b.get("source_semantic_score", 0.0)),
         clamp01(b.get("opposite_semantic_score", 0.0)),
         clamp01(b.get("semantic_A_score", 0.0)),
@@ -4983,13 +5719,13 @@ def score_profile_for_generator(b: dict[str, Any]) -> dict[str, float]:
         + 0.18 * french_naturalness
         + 0.18 * semantic_surprise
         + 0.26 * pun_pivot_usability
-        + 0.10 * english_meaning_similarity
+        + 0.10 * semantic_domain_similarity
     )
     return {
         "phonetic_match": round(float(phonetic_match), 4),
         "french_naturalness": round(float(french_naturalness), 4),
         "semantic_surprise": round(float(semantic_surprise), 4),
-        "english_meaning_similarity": round(float(english_meaning_similarity), 4),
+        "semantic_domain_similarity": round(float(semantic_domain_similarity), 4),
         "pun_pivot_usability": round(float(pun_pivot_usability), 4),
         "overall_score": round(float(overall_score), 4),
     }
@@ -5003,27 +5739,16 @@ def compact_generator_idea(b: dict[str, Any]) -> dict[str, Any]:
         return {}
     relation_raw = clean(b.get("phonetic_relation") or b.get("relation") or b.get("bridge_type") or "")
     relation = "same_sound" if ("homophone" in relation_raw or clamp01(b.get("phonetic_score", 0.0)) >= 0.96) else "similar_sound"
-    return {"left": left, "right": right, "relation": relation, "scores": score_profile_for_generator(b)}
+    return {
+        "left": left,
+        "right": right,
+        "relation": relation,
+        "retrieval_bucket": clean(b.get("retrieval_bucket", "")),
+        "retrieval_bucket_rank": int(b.get("retrieval_bucket_rank", 0) or 0),
+        "scores": score_profile_for_generator(b),
+    }
 
 
-def _candidate_passes_generator_floor(b: dict[str, Any]) -> bool:
-    idea = compact_generator_idea(b)
-    if not idea:
-        return False
-    s = idea.get("scores", {}) or {}
-    pivot = float(s.get("pun_pivot_usability", 0.0) or 0.0)
-    natural = float(s.get("french_naturalness", 0.0) or 0.0)
-    phon = float(s.get("phonetic_match", 0.0) or 0.0)
-    overall = float(s.get("overall_score", 0.0) or 0.0)
-    left, right = idea.get("left", ""), idea.get("right", "")
-    if not left or not right:
-        return False
-    # Reject surface pairs where one side is merely a support/function accident.
-    if min(surface_pivotability(left), surface_pivotability(right)) <= 0.06:
-        return False
-    if phon >= 0.96:
-        return natural >= 0.34 and pivot >= 0.38 and overall >= 0.58
-    return phon >= 0.78 and natural >= 0.34 and pivot >= 0.42 and overall >= 0.56
 
 
 def _dedupe_generator_ideas(ideas: list[dict[str, Any]], limit: int = MAX_GENERATOR_AFFORDANCES) -> list[dict[str, Any]]:
@@ -5044,36 +5769,18 @@ def _dedupe_generator_ideas(ideas: list[dict[str, Any]], limit: int = MAX_GENERA
     return out
 
 
-def _retrieval_columns_from_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    compact = compact_retrieval_pack(pack)
-    diag = pack.get("bridge_diagnostics", {}) or {}
-    candidates = compact.get("top_bridge_candidates", []) or compact.get("llm_judge_candidates", []) or []
-    ideas = _dedupe_generator_ideas(
-        [compact_generator_idea(c) for c in candidates if _candidate_passes_generator_floor(c)],
-        limit=MAX_GENERATOR_AFFORDANCES,
-    )
-    out = {
-        "retrieval_affordances_json": _safe_json_for_tsv(ideas),
-        "retrieval_affordance_count": int(len(ideas)),
-        "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
-        "retrieval_bridge_count": int(diag.get("bridge_count", len(pack.get("bridge_candidates", []))) or 0),
-        "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
-    }
-    if RETRIEVAL_DEBUG_PACKS:
-        out["retrieval_debug_json"] = _safe_json_for_tsv(compact)
-    return out
 
 
 def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit(
             "Usage:\n"
-            "  python retrieval.py status\n"
-            "  python retrieval.py cancel\n"
-            "  python retrieval.py debug_row gemini 0\n"
-            "  python retrieval.py retrieve gemini 0 100\n"
-            "  python retrieval.py retrieve_chunks gemini 0 1\n"
-            "  python retrieval.py eval gemini 0 100"
+            "  python retrieval_refactored.py status\n"
+            "  python retrieval_refactored.py cancel\n"
+            "  python retrieval_refactored.py debug_row gemini 0\n"
+            "  python retrieval_refactored.py retrieve gemini 0 100\n"
+            "  python retrieval_refactored.py retrieve_chunks gemini 0 1\n"
+            "  python retrieval_refactored.py eval gemini 0 100"
         )
     task = sys.argv[1]
     if task == "status":
@@ -5119,7 +5826,6 @@ def main() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v23: stricter generator export quality.
 # Keep the approved generator-facing schema; tighten what is allowed through.
 # ─────────────────────────────────────────────────────────────────────────────
 _FINITE_FORM_JUNK_SURFACES = {
@@ -5225,40 +5931,18 @@ def surface_naturalness_score(surface: Any) -> float:
     return clamp01(max(surface_recognizability_prior(s), surface_pivotability(s)))
 
 
-def _candidate_passes_generator_floor(b: dict[str, Any]) -> bool:
-    idea = compact_generator_idea(b)
-    if not idea:
-        return False
-    left, right = idea.get("left", ""), idea.get("right", "")
-    if not left or not right:
-        return False
-    if looks_like_low_value_finite_form(left) or looks_like_low_value_finite_form(right):
-        return False
-    if min(surface_pivotability(left), surface_pivotability(right)) <= 0.10:
-        return False
-    s = idea.get("scores", {}) or {}
-    pivot = float(s.get("pun_pivot_usability", 0.0) or 0.0)
-    natural = float(s.get("french_naturalness", 0.0) or 0.0)
-    phon = float(s.get("phonetic_match", 0.0) or 0.0)
-    overall = float(s.get("overall_score", 0.0) or 0.0)
-    # Generator-facing output should be sparse but strong. Exact sound matches
-    # still need to be usable French pivots; near matches need even more quality.
-    if phon >= 0.96:
-        return natural >= 0.50 and pivot >= 0.55 and overall >= 0.62
-    return phon >= 0.80 and natural >= 0.56 and pivot >= 0.60 and overall >= 0.60
 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v24: wider high-quality recall via internal score lanes.
 #
 # This does NOT change the generator-facing schema.  It changes selection only:
 # candidates can survive because they are unusually strong on different approved
-# score dimensions (sound, natural French, surprise, English-meaning similarity,
+# score dimensions (sound, natural French, surprise, French semantic domain-meaning similarity,
 # pivot usability, overall), while hard anti-junk gates remain in place.
 # ─────────────────────────────────────────────────────────────────────────────
-MAX_GENERATOR_IDEAS_V24 = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS", str(MAX_GENERATOR_AFFORDANCES)))
-MAX_IDEAS_PER_INTERNAL_LANE_V24 = int(os.environ.get("RETRIEVAL_MAX_IDEAS_PER_INTERNAL_LANE", "3"))
+MAX_GENERATOR_IDEAS_INTERNAL_LANES = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS", str(MAX_GENERATOR_AFFORDANCES)))
+MAX_IDEAS_PER_INTERNAL_LANE = int(os.environ.get("RETRIEVAL_MAX_IDEAS_PER_INTERNAL_LANE", "3"))
 
 
 def _idea_pair_key(idea: dict[str, Any]) -> tuple[str, str, str]:
@@ -5274,7 +5958,7 @@ def _bridge_is_actual_phrase_pair(b: dict[str, Any]) -> bool:
     return len(clean(left).split()) > 1 or len(clean(right).split()) > 1
 
 
-def _candidate_hard_reject_v24(b: dict[str, Any]) -> bool:
+def _candidate_hard_reject(b: dict[str, Any]) -> bool:
     idea = compact_generator_idea(b)
     if not idea:
         return True
@@ -5296,16 +5980,16 @@ def _candidate_hard_reject_v24(b: dict[str, Any]) -> bool:
     return False
 
 
-def _candidate_internal_lanes_v24(b: dict[str, Any]) -> list[str]:
+def _candidate_internal_lanes(b: dict[str, Any]) -> list[str]:
     """Internal retention lanes. These names are not exported."""
-    if _candidate_hard_reject_v24(b):
+    if _candidate_hard_reject(b):
         return []
     idea = compact_generator_idea(b)
     scores = idea.get("scores", {}) or {}
     phon = float(scores.get("phonetic_match", 0.0) or 0.0)
     natural = float(scores.get("french_naturalness", 0.0) or 0.0)
     surprise = float(scores.get("semantic_surprise", 0.0) or 0.0)
-    english = float(scores.get("english_meaning_similarity", 0.0) or 0.0)
+    semantic_domain = float(scores.get("semantic_domain_similarity", 0.0) or 0.0)
     pivot = float(scores.get("pun_pivot_usability", 0.0) or 0.0)
     overall = float(scores.get("overall_score", 0.0) or 0.0)
     phrase = _bridge_is_actual_phrase_pair(b)
@@ -5324,8 +6008,8 @@ def _candidate_internal_lanes_v24(b: dict[str, Any]) -> list[str]:
     if phon >= 0.80 and natural >= 0.48 and pivot >= 0.46 and surprise >= 0.62:
         lanes.append("surprise")
 
-    # English-meaning similarity is a bonus lane, not the main objective.
-    if phon >= 0.78 and natural >= 0.44 and pivot >= 0.42 and english >= 0.50:
+    # French semantic domain-meaning similarity is a bonus lane, not the main objective.
+    if phon >= 0.78 and natural >= 0.44 and pivot >= 0.42 and semantic_domain >= 0.50:
         lanes.append("meaning")
 
     # Real multiword surface pairs get a lane, but still need the same quality gates.
@@ -5339,12 +6023,12 @@ def _candidate_internal_lanes_v24(b: dict[str, Any]) -> list[str]:
     return lanes
 
 
-def _lane_sort_key_v24(lane: str, b: dict[str, Any]) -> tuple[float, float, float, float]:
+def _internal_lane_sort_key(lane: str, b: dict[str, Any]) -> tuple[float, float, float, float]:
     scores = compact_generator_idea(b).get("scores", {}) or {}
     phon = float(scores.get("phonetic_match", 0.0) or 0.0)
     natural = float(scores.get("french_naturalness", 0.0) or 0.0)
     surprise = float(scores.get("semantic_surprise", 0.0) or 0.0)
-    english = float(scores.get("english_meaning_similarity", 0.0) or 0.0)
+    semantic_domain = float(scores.get("semantic_domain_similarity", 0.0) or 0.0)
     pivot = float(scores.get("pun_pivot_usability", 0.0) or 0.0)
     overall = float(scores.get("overall_score", 0.0) or 0.0)
     if lane == "sound":
@@ -5352,109 +6036,29 @@ def _lane_sort_key_v24(lane: str, b: dict[str, Any]) -> tuple[float, float, floa
     if lane == "surprise":
         return (-surprise, -phon, -pivot, -overall)
     if lane == "meaning":
-        return (-english, -phon, -pivot, -overall)
+        return (-semantic_domain, -phon, -pivot, -overall)
     if lane == "phrase":
         return (0 if _bridge_is_actual_phrase_pair(b) else 1, -overall, -phon, -pivot)
     return (-overall, -phon, -pivot, -surprise)
 
 
-def _select_generator_ideas_from_bridges_v24(bridges: list[dict[str, Any]], limit: int = MAX_GENERATOR_IDEAS_V24) -> list[dict[str, Any]]:
-    if not bridges:
-        return []
-
-    lane_to_bridges: dict[str, list[dict[str, Any]]] = {"sound": [], "surprise": [], "meaning": [], "phrase": [], "overall": []}
-    for b in bridges:
-        lanes = _candidate_internal_lanes_v24(b)
-        for lane in lanes:
-            lane_to_bridges.setdefault(lane, []).append(b)
-
-    for lane, xs in lane_to_bridges.items():
-        xs.sort(key=lambda b, lane=lane: _lane_sort_key_v24(lane, b))
-
-    selected: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    # Interleave internal lanes so wider semantic/surprise candidates can survive
-    # alongside strict sound/meaning candidates. Lane names are not exported.
-    lane_order = ["sound", "surprise", "phrase", "meaning", "overall"]
-    while len(selected) < limit:
-        added = False
-        for lane in lane_order:
-            kept_from_lane = 0
-            while lane_to_bridges.get(lane) and kept_from_lane < MAX_IDEAS_PER_INTERNAL_LANE_V24:
-                b = lane_to_bridges[lane].pop(0)
-                idea = compact_generator_idea(b)
-                key = _idea_pair_key(idea)
-                if key in seen:
-                    continue
-                seen.add(key)
-                selected.append(idea)
-                kept_from_lane += 1
-                added = True
-                if len(selected) >= limit:
-                    break
-            if len(selected) >= limit:
-                break
-        if not added:
-            break
-
-    # Backfill by overall quality from any candidate that passed a lane.
-    if len(selected) < limit:
-        passed = []
-        for b in bridges:
-            if _candidate_internal_lanes_v24(b):
-                passed.append(b)
-        passed.sort(key=lambda b: _lane_sort_key_v24("overall", b))
-        for b in passed:
-            if len(selected) >= limit:
-                break
-            idea = compact_generator_idea(b)
-            key = _idea_pair_key(idea)
-            if key in seen:
-                continue
-            seen.add(key)
-            selected.append(idea)
-
-    return selected[:limit]
 
 
-def _candidate_passes_generator_floor(b: dict[str, Any]) -> bool:
-    # Kept for compatibility with older paths; selection now uses internal lanes.
-    return bool(_candidate_internal_lanes_v24(b))
 
 
-def _retrieval_columns_from_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    # Use the full bridge candidate set, not only the compact/debug shortlist, so
-    # wider semantic candidates have a chance to survive if they are strong on one
-    # approved score dimension.
-    diag = pack.get("bridge_diagnostics", {}) or {}
-    raw_candidates = pack.get("bridge_candidates", []) or []
-    ideas = _select_generator_ideas_from_bridges_v24(raw_candidates, limit=MAX_GENERATOR_IDEAS_V24)
-    out = {
-        "retrieval_affordances_json": _safe_json_for_tsv(ideas),
-        "retrieval_affordance_count": int(len(ideas)),
-        "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
-        "retrieval_bridge_count": int(diag.get("bridge_count", len(raw_candidates)) or 0),
-        "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
-    }
-    if RETRIEVAL_DEBUG_PACKS:
-        compact = compact_retrieval_pack(pack)
-        out["retrieval_debug_json"] = _safe_json_for_tsv(compact)
-    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v25: Low-inspired controlled recall expansion.
 #
 # Goal: return more quality candidates without forcing close semantic range.
 # Keep the same generator-facing schema.  The new selection first keeps strict
 # candidates, then backfills rows with too few ideas using high-quality French
 # phonetic reinterpretations that are natural, usable pivots, and semantically
-# surprising even when English-meaning similarity is weak.
+# surprising even when French semantic domain-meaning similarity is weak.
 # ─────────────────────────────────────────────────────────────────────────────
-TARGET_GENERATOR_IDEAS_V25 = int(os.environ.get("RETRIEVAL_TARGET_GENERATOR_IDEAS", "6"))
-MAX_GENERATOR_IDEAS_V25 = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS", str(max(MAX_GENERATOR_IDEAS_V24, 10))))
-MAX_IDEAS_PER_SURFACE_V25 = int(os.environ.get("RETRIEVAL_MAX_IDEAS_PER_SURFACE", "2"))
+TARGET_GENERATOR_IDEAS_STRICT_CREATIVE = int(os.environ.get("RETRIEVAL_TARGET_GENERATOR_IDEAS", "6"))
+MAX_GENERATOR_IDEAS_STRICT_CREATIVE = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS", str(max(MAX_GENERATOR_IDEAS_INTERNAL_LANES, 10))))
+MAX_IDEAS_PER_SURFACE = int(os.environ.get("RETRIEVAL_MAX_IDEAS_PER_SURFACE", "2"))
 
 _STRONG_PIVOT_OVERRIDES.update({
     "brise": 0.82,
@@ -5479,20 +6083,20 @@ _WEAK_PIVOT_OVERRIDES.update({
 })
 
 
-def _candidate_quality_values_v25(b: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float]]:
+def _candidate_quality_values(b: dict[str, Any]) -> tuple[dict[str, Any], dict[str, float]]:
     idea = compact_generator_idea(b)
     scores = idea.get("scores", {}) if idea else {}
     return idea, {
         "phon": float(scores.get("phonetic_match", 0.0) or 0.0),
         "natural": float(scores.get("french_naturalness", 0.0) or 0.0),
         "surprise": float(scores.get("semantic_surprise", 0.0) or 0.0),
-        "english": float(scores.get("english_meaning_similarity", 0.0) or 0.0),
+        "semantic_domain": float(scores.get("semantic_domain_similarity", 0.0) or 0.0),
         "pivot": float(scores.get("pun_pivot_usability", 0.0) or 0.0),
         "overall": float(scores.get("overall_score", 0.0) or 0.0),
     }
 
 
-def _surface_pair_hard_reject_v25(left: str, right: str, b: dict[str, Any]) -> bool:
+def _surface_pair_hard_reject(left: str, right: str, b: dict[str, Any]) -> bool:
     if not left or not right:
         return True
     if looks_like_low_value_finite_form(left) or looks_like_low_value_finite_form(right):
@@ -5508,25 +6112,25 @@ def _surface_pair_hard_reject_v25(left: str, right: str, b: dict[str, Any]) -> b
     return False
 
 
-def _strict_candidate_v25(b: dict[str, Any]) -> bool:
-    idea, q = _candidate_quality_values_v25(b)
+def _strict_candidate(b: dict[str, Any]) -> bool:
+    idea, q = _candidate_quality_values(b)
     if not idea:
         return False
     left, right = clean(idea.get("left", "")), clean(idea.get("right", ""))
-    if _surface_pair_hard_reject_v25(left, right, b):
+    if _surface_pair_hard_reject(left, right, b):
         return False
     if q["phon"] >= 0.96:
         return q["natural"] >= 0.50 and q["pivot"] >= 0.50 and q["overall"] >= 0.60
     return q["phon"] >= 0.80 and q["natural"] >= 0.54 and q["pivot"] >= 0.52 and q["overall"] >= 0.58
 
 
-def _creative_candidate_v25(b: dict[str, Any]) -> bool:
+def _creative_candidate(b: dict[str, Any]) -> bool:
     """Low-style compensation: semantics may drift, but sound/French/pivot/surprise must be strong."""
-    idea, q = _candidate_quality_values_v25(b)
+    idea, q = _candidate_quality_values(b)
     if not idea:
         return False
     left, right = clean(idea.get("left", "")), clean(idea.get("right", ""))
-    if _surface_pair_hard_reject_v25(left, right, b):
+    if _surface_pair_hard_reject(left, right, b):
         return False
     if q["phon"] >= 0.94 and q["natural"] >= 0.46 and q["pivot"] >= 0.46 and q["surprise"] >= 0.42:
         return True
@@ -5537,8 +6141,8 @@ def _creative_candidate_v25(b: dict[str, Any]) -> bool:
     return False
 
 
-def _selection_rank_v25(b: dict[str, Any]) -> tuple[float, float, float, float, float]:
-    _, q = _candidate_quality_values_v25(b)
+def _selection_rank(b: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    _, q = _candidate_quality_values(b)
     if _is_low_leap_bridge(b):
         rank = (
             0.34 * q["phon"]
@@ -5552,79 +6156,31 @@ def _selection_rank_v25(b: dict[str, Any]) -> tuple[float, float, float, float, 
             + 0.24 * q["pivot"]
             + 0.20 * q["natural"]
             + 0.18 * q["surprise"]
-            + 0.08 * q["english"]
+            + 0.08 * q["semantic_domain"]
         )
     return (-rank, -q["phon"], -q["pivot"], -q["surprise"], -q["natural"])
 
 
-def _select_generator_ideas_from_bridges_v24(bridges: list[dict[str, Any]], limit: int = MAX_GENERATOR_IDEAS_V25) -> list[dict[str, Any]]:
-    """Override v24 selector with a strict-then-creative Low-style backfill."""
-    if not bridges:
-        return []
-
-    strict = [b for b in bridges if _strict_candidate_v25(b)]
-    creative = [b for b in bridges if _creative_candidate_v25(b)]
-
-    strict.sort(key=_selection_rank_v25)
-    creative.sort(key=_selection_rank_v25)
-
-    selected: list[dict[str, Any]] = []
-    seen_pairs: set[tuple[str, str, str]] = set()
-    surface_counts: dict[str, int] = {}
-
-    def add_from(pool: list[dict[str, Any]], max_take: int | None = None) -> None:
-        taken = 0
-        for b in pool:
-            if len(selected) >= limit:
-                return
-            if max_take is not None and taken >= max_take:
-                return
-            idea = compact_generator_idea(b)
-            if not idea:
-                continue
-            left, right = clean(idea.get("left", "")), clean(idea.get("right", ""))
-            key = _idea_pair_key(idea)
-            if key in seen_pairs:
-                continue
-            lk, rk = surface_key(left), surface_key(right)
-            if surface_counts.get(lk, 0) >= MAX_IDEAS_PER_SURFACE_V25 or surface_counts.get(rk, 0) >= MAX_IDEAS_PER_SURFACE_V25:
-                continue
-            seen_pairs.add(key)
-            surface_counts[lk] = surface_counts.get(lk, 0) + 1
-            surface_counts[rk] = surface_counts.get(rk, 0) + 1
-            selected.append(idea)
-            taken += 1
-
-    add_from(strict, max_take=min(limit, TARGET_GENERATOR_IDEAS_V25))
-    if len(selected) < TARGET_GENERATOR_IDEAS_V25:
-        add_from(creative)
-    if len(selected) < min(limit, TARGET_GENERATOR_IDEAS_V25):
-        fallback = [b for b in bridges if (_strict_candidate_v25(b) or _creative_candidate_v25(b))]
-        fallback.sort(key=_selection_rank_v25)
-        add_from(fallback)
-
-    return selected[:limit]
 
 
 def _candidate_passes_generator_floor(b: dict[str, Any]) -> bool:
-    return _strict_candidate_v25(b) or _creative_candidate_v25(b)
+    return _strict_candidate(b) or _creative_candidate(b)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v26: increase recall by searching outside close semantic range
 # without weakening junk filters.
 #
 # This does not lower export floors.  It adds another candidate source only when
 # the strict bridge miner has too few ideas: clean phonetic-neighbor affordances
 # from the already-computed phonetic A/B/pun lists.  These candidates are allowed
-# to have weak English-meaning similarity, but they must still pass the same
+# to have weak French semantic domain-meaning similarity, but they must still pass the same
 # natural French, pivot-usability, and sound/surprise gates.
 # ─────────────────────────────────────────────────────────────────────────────
-TARGET_GENERATOR_IDEAS_V26 = int(os.environ.get("RETRIEVAL_TARGET_GENERATOR_IDEAS", "6"))
-MAX_GENERATOR_IDEAS_V26 = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS", str(max(MAX_GENERATOR_IDEAS_V25, 10))))
-MAX_PHONETIC_COMPENSATION_PER_SOURCE_V26 = int(os.environ.get("RETRIEVAL_MAX_PHONETIC_COMPENSATION_PER_SOURCE", "18"))
+TARGET_GENERATOR_IDEAS_COMPENSATION = int(os.environ.get("RETRIEVAL_TARGET_GENERATOR_IDEAS", "6"))
+MAX_GENERATOR_IDEAS_COMPENSATION = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS", str(max(MAX_GENERATOR_IDEAS_STRICT_CREATIVE, 10))))
+MAX_PHONETIC_COMPENSATION_PER_SOURCE = int(os.environ.get("RETRIEVAL_MAX_PHONETIC_COMPENSATION_PER_SOURCE", "18"))
 
 
-def _phonetic_affordance_bridge_v26(r: dict[str, Any], default_side: str) -> dict[str, Any]:
+def _phonetic_affordance_bridge(r: dict[str, Any], default_side: str) -> dict[str, Any]:
     """Convert an already-computed phonetic neighbor into a bridge-shaped item.
 
     This is the Low-style compensation source: the right side can live outside
@@ -5637,7 +6193,7 @@ def _phonetic_affordance_bridge_v26(r: dict[str, Any], default_side: str) -> dic
         return {}
     if surface_key(probe) == surface_key(cand):
         return {}
-    if _surface_pair_hard_reject_v25(probe, cand, {"bridge_type": "phonetic_compensation"}):
+    if _surface_pair_hard_reject(probe, cand, {"bridge_type": "phonetic_compensation"}):
         return {}
     phon = float(r.get("final_score", r.get("phonetic_score", 0.0)) or 0.0)
     if phon < MIN_EXPANSION_PHONETIC:
@@ -5674,31 +6230,30 @@ def _phonetic_affordance_bridge_v26(r: dict[str, Any], default_side: str) -> dic
     return b
 
 
-def _compensation_candidates_from_pack_v26(pack: dict[str, Any]) -> list[dict[str, Any]]:
+def _compensation_candidates_from_pack(pack: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     sources = [
         ("A", pack.get("phonetic_A_candidates", []) or []),
         ("B", pack.get("phonetic_B_candidates", []) or []),
-        ("pun_word", pack.get("phonetic_pun_candidates", []) or []),
     ]
     for side, rows in sources:
         taken = 0
         for r in rows:
-            if taken >= MAX_PHONETIC_COMPENSATION_PER_SOURCE_V26:
+            if taken >= MAX_PHONETIC_COMPENSATION_PER_SOURCE:
                 break
-            b = _phonetic_affordance_bridge_v26(r, side)
+            b = _phonetic_affordance_bridge(r, side)
             if not b:
                 continue
-            # Same quality bar as v25: no weaker junk gate for compensation.
-            if not (_strict_candidate_v25(b) or _creative_candidate_v25(b)):
+            # Same quality bar as : no weaker junk gate for compensation.
+            if not (_strict_candidate(b) or _creative_candidate(b)):
                 continue
             out.append(b)
             taken += 1
-    out.sort(key=_selection_rank_v25)
+    out.sort(key=_selection_rank)
     return out
 
 
-def _append_ideas_v26(selected: list[dict[str, Any]], bridges: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+def _append_ideas(selected: list[dict[str, Any]], bridges: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     seen: set[tuple[str, str, str]] = set(_idea_pair_key(x) for x in selected if x)
     surface_counts: dict[str, int] = {}
     for idea in selected:
@@ -5708,7 +6263,7 @@ def _append_ideas_v26(selected: list[dict[str, Any]], bridges: list[dict[str, An
             k = surface_key(idea.get(side, ""))
             if k:
                 surface_counts[k] = surface_counts.get(k, 0) + 1
-    for b in sorted(bridges, key=_selection_rank_v25):
+    for b in sorted(bridges, key=_selection_rank):
         if len(selected) >= limit:
             break
         idea = compact_generator_idea(b)
@@ -5718,12 +6273,12 @@ def _append_ideas_v26(selected: list[dict[str, Any]], bridges: list[dict[str, An
         if key in seen:
             continue
         left, right = clean(idea.get("left", "")), clean(idea.get("right", ""))
-        if _surface_pair_hard_reject_v25(left, right, b):
+        if _surface_pair_hard_reject(left, right, b):
             continue
-        if not (_strict_candidate_v25(b) or _creative_candidate_v25(b)):
+        if not (_strict_candidate(b) or _creative_candidate(b)):
             continue
         lk, rk = surface_key(left), surface_key(right)
-        if surface_counts.get(lk, 0) >= MAX_IDEAS_PER_SURFACE_V25 or surface_counts.get(rk, 0) >= MAX_IDEAS_PER_SURFACE_V25:
+        if surface_counts.get(lk, 0) >= MAX_IDEAS_PER_SURFACE or surface_counts.get(rk, 0) >= MAX_IDEAS_PER_SURFACE:
             continue
         selected.append(idea)
         seen.add(key)
@@ -5732,50 +6287,25 @@ def _append_ideas_v26(selected: list[dict[str, Any]], bridges: list[dict[str, An
     return selected[:limit]
 
 
-def _retrieval_columns_from_pack(pack: dict[str, Any]) -> dict[str, Any]:
-    diag = pack.get("bridge_diagnostics", {}) or {}
-    bridge_candidates = pack.get("bridge_candidates", []) or []
-    ideas = _select_generator_ideas_from_bridges_v24(bridge_candidates, limit=MAX_GENERATOR_IDEAS_V26)
-
-    # If close/expanded semantic bridge mining does not find enough, look in
-    # other semantic ranges via strict phonetic compensation candidates already
-    # computed for this row.  This increases recall without lowering junk bars.
-    if len(ideas) < TARGET_GENERATOR_IDEAS_V26:
-        compensation = _compensation_candidates_from_pack_v26(pack)
-        ideas = _append_ideas_v26(ideas, compensation, limit=MAX_GENERATOR_IDEAS_V26)
-
-    out = {
-        "retrieval_affordances_json": _safe_json_for_tsv(ideas),
-        "retrieval_affordance_count": int(len(ideas)),
-        "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
-        "retrieval_bridge_count": int(diag.get("bridge_count", len(bridge_candidates)) or 0),
-        "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
-    }
-    if RETRIEVAL_DEBUG_PACKS:
-        compact = compact_retrieval_pack(pack)
-        compact["phonetic_compensation_candidate_count"] = len(_compensation_candidates_from_pack_v26(pack))
-        out["retrieval_debug_json"] = _safe_json_for_tsv(compact)
-    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v27: iterative Low-style semantic leap expansion.
 #
 # This is additive only. It preserves the existing strict retrieval/export gates
 # and adds more candidates only when the row has too few generator affordances.
 # Both A and B sides expand outward. Stopping is controlled by target count,
-# depth, and a small runtime budget; semantic closeness to English is not a gate.
+# depth, and a small runtime budget; semantic closeness to French semantic domain is not a gate.
 # ─────────────────────────────────────────────────────────────────────────────
-LOW_LEAP_TARGET_IDEAS_V27 = int(os.environ.get("RETRIEVAL_TARGET_GENERATOR_IDEAS", "6"))
-LOW_LEAP_MAX_DEPTH_V27 = int(os.environ.get("RETRIEVAL_LOW_LEAP_MAX_DEPTH", "4"))
-LOW_LEAP_FRONTIER_PER_SIDE_V27 = int(os.environ.get("RETRIEVAL_LOW_LEAP_FRONTIER_PER_SIDE", "8"))
-LOW_LEAP_EXPANSIONS_PER_QUERY_V27 = int(os.environ.get("RETRIEVAL_LOW_LEAP_EXPANSIONS_PER_QUERY", "6"))
-LOW_LEAP_PHONETIC_NEIGHBORS_V27 = int(os.environ.get("RETRIEVAL_LOW_LEAP_PHONETIC_NEIGHBORS", "10"))
-LOW_LEAP_MAX_BRIDGES_V27 = int(os.environ.get("RETRIEVAL_LOW_LEAP_MAX_BRIDGES", "40"))
-LOW_LEAP_TIME_BUDGET_SEC_V27 = float(os.environ.get("RETRIEVAL_LOW_LEAP_TIME_BUDGET_SEC", "3.5"))
+LOW_LEAP_TARGET_GENERATOR_IDEAS = int(os.environ.get("RETRIEVAL_TARGET_GENERATOR_IDEAS", "6"))
+LOW_LEAP_MAX_DEPTH = int(os.environ.get("RETRIEVAL_LOW_LEAP_MAX_DEPTH", "4"))
+LOW_LEAP_FRONTIER_PER_SIDE = int(os.environ.get("RETRIEVAL_LOW_LEAP_FRONTIER_PER_SIDE", "8"))
+LOW_LEAP_EXPANSIONS_PER_QUERY = int(os.environ.get("RETRIEVAL_LOW_LEAP_EXPANSIONS_PER_QUERY", "6"))
+LOW_LEAP_PHONETIC_NEIGHBORS = int(os.environ.get("RETRIEVAL_LOW_LEAP_PHONETIC_NEIGHBORS", "10"))
+LOW_LEAP_MAX_BRIDGES = int(os.environ.get("RETRIEVAL_LOW_LEAP_MAX_BRIDGES", "40"))
+LOW_LEAP_TIME_BUDGET_SEC = float(os.environ.get("RETRIEVAL_LOW_LEAP_TIME_BUDGET_SEC", "3.5"))
 
 
-def _low_leap_seed_surfaces_v27(pack: dict[str, Any], side: str) -> list[str]:
+def _low_leap_seed_surfaces(pack: dict[str, Any], side: str) -> list[str]:
     if side == "A":
         base = list(pack.get("meaning_A_terms", []) or [])
         sem = pack.get("semantic_A_expressions", []) or []
@@ -5783,13 +6313,13 @@ def _low_leap_seed_surfaces_v27(pack: dict[str, Any], side: str) -> list[str]:
         base = list(pack.get("meaning_B_terms", []) or [])
         sem = pack.get("semantic_B_expressions", []) or []
     extra = [clean(x.get("surface", "")) for x in sem[:SIDE_SEMANTIC_K]]
-    return [x for x in unique_keep_order(base + extra, limit=LOW_LEAP_FRONTIER_PER_SIDE_V27) if x and not lexically_bad_candidate_surface(x)]
+    return [x for x in unique_keep_order(base + extra, limit=LOW_LEAP_FRONTIER_PER_SIDE) if x and not lexically_bad_candidate_surface(x)]
 
 
-def _low_leap_bridge_from_pair_v27(source: str, cand: str, source_side: str, depth: int, phon: float, source_sem: float = 0.35) -> dict[str, Any]:
+def _low_leap_bridge_from_pair(source: str, cand: str, source_side: str, depth: int, phon: float, source_sem: float = 0.35) -> dict[str, Any]:
     if not source or not cand or surface_key(source) == surface_key(cand):
         return {}
-    if _surface_pair_hard_reject_v25(source, cand, {"bridge_type": "low_leap"}):
+    if _surface_pair_hard_reject(source, cand, {"bridge_type": "low_leap"}):
         return {}
     if looks_like_low_value_finite_form(source) or looks_like_low_value_finite_form(cand):
         return {}
@@ -5802,9 +6332,9 @@ def _low_leap_bridge_from_pair_v27(source: str, cand: str, source_side: str, dep
         expression_quality({"surface": source}),
         expression_quality({"surface": cand}),
     )
-    # Low-leap candidates are allowed to be far from the English meanings. Keep a
-    # small nonzero English signal so existing score profile stays well-formed.
-    english_sim = max(0.02, min(0.28, float(source_sem or 0.0)))
+    # Low-leap candidates are allowed to be far from the French semantic domain meanings. Keep a
+    # small nonzero French semantic domain signal so existing score profile stays well-formed.
+    semantic_domain_sim = max(0.02, min(0.28, float(source_sem or 0.0)))
     surprise = humor_surprise_score(float(phon), float(source_sem or 0.0), 0.03, same_root_flag)
     b = {
         "bridge_type": "low_leap",
@@ -5814,7 +6344,7 @@ def _low_leap_bridge_from_pair_v27(source: str, cand: str, source_side: str, dep
         "sound_source": source,
         "candidate": cand,
         "source_semantic_score": float(source_sem or 0.0),
-        "opposite_semantic_score": float(english_sim),
+        "opposite_semantic_score": float(semantic_domain_sim),
         "phonetic_score": float(phon),
         "naturalness_score": float(naturalness),
         "surprise_score": float(surprise),
@@ -5828,7 +6358,7 @@ def _low_leap_bridge_from_pair_v27(source: str, cand: str, source_side: str, dep
     return b
 
 
-def _mine_iterative_low_leap_bridges_v27(pipe: RetrievalPipeline, pack: dict[str, Any], existing_ideas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _mine_iterative_low_leap_bridges(pipe: RetrievalPipeline, pack: dict[str, Any], existing_ideas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Walk outward from both meaning sides and mine high-quality phonetic pairs.
 
     This does not relax junk gates. It changes where we look: after the close
@@ -5845,25 +6375,25 @@ def _mine_iterative_low_leap_bridges_v27(pipe: RetrievalPipeline, pack: dict[str
 
     all_bridges: list[dict[str, Any]] = []
     frontiers = {
-        "A": _low_leap_seed_surfaces_v27(pack, "A"),
-        "B": _low_leap_seed_surfaces_v27(pack, "B"),
+        "A": _low_leap_seed_surfaces(pack, "A"),
+        "B": _low_leap_seed_surfaces(pack, "B"),
     }
     visited = {"A": {surface_key(x) for x in frontiers["A"]}, "B": {surface_key(x) for x in frontiers["B"]}}
 
-    for depth in range(1, LOW_LEAP_MAX_DEPTH_V27 + 1):
-        if len(existing_ideas) + len(all_bridges) >= LOW_LEAP_TARGET_IDEAS_V27:
+    for depth in range(1, LOW_LEAP_MAX_DEPTH + 1):
+        if len(existing_ideas) + len(all_bridges) >= LOW_LEAP_TARGET_GENERATOR_IDEAS:
             break
-        if time.time() - t0 > LOW_LEAP_TIME_BUDGET_SEC_V27:
+        if time.time() - t0 > LOW_LEAP_TIME_BUDGET_SEC:
             break
 
         requests: list[tuple[str, int, str]] = []
         channel_meta: dict[str, tuple[str, str]] = {}
         for side in ("A", "B"):
-            for i, term in enumerate(frontiers[side][:LOW_LEAP_FRONTIER_PER_SIDE_V27]):
+            for i, term in enumerate(frontiers[side][:LOW_LEAP_FRONTIER_PER_SIDE]):
                 if not term:
                     continue
                 ch = f"low_leap_{side}_{depth}_{i}"
-                requests.append((term, LOW_LEAP_EXPANSIONS_PER_QUERY_V27, ch))
+                requests.append((term, LOW_LEAP_EXPANSIONS_PER_QUERY, ch))
                 channel_meta[ch] = (side, term)
         if not requests:
             break
@@ -5894,17 +6424,17 @@ def _mine_iterative_low_leap_bridges_v27(pipe: RetrievalPipeline, pack: dict[str
                 sem_score = float(r.get("score", 0.0) or 0.0)
                 node = {"side": side, "surface": surf, "semantic_score": sem_score, "depth": depth}
                 source_nodes.append(node)
-                if len(next_frontiers[side]) < LOW_LEAP_FRONTIER_PER_SIDE_V27:
+                if len(next_frontiers[side]) < LOW_LEAP_FRONTIER_PER_SIDE:
                     next_frontiers[side].append(surf)
 
         # Phonetic search for all leapt surfaces, batched by existing helper.
         # search_from_text already uses caches; the bounded source_nodes list keeps
         # runtime predictable.
-        for node in source_nodes[: LOW_LEAP_FRONTIER_PER_SIDE_V27 * 2]:
+        for node in source_nodes[: LOW_LEAP_FRONTIER_PER_SIDE * 2]:
             source = node["surface"]
             side = node["side"]
             try:
-                neigh = pipe.phonetic.search_from_text(source, top_k=LOW_LEAP_PHONETIC_NEIGHBORS_V27)
+                neigh = pipe.phonetic.search_from_text(source, top_k=LOW_LEAP_PHONETIC_NEIGHBORS)
             except Exception:
                 neigh = []
             for r in neigh or []:
@@ -5912,17 +6442,17 @@ def _mine_iterative_low_leap_bridges_v27(pipe: RetrievalPipeline, pack: dict[str
                 if not cand or surface_key(cand) in seen_surfaces:
                     continue
                 phon = float(r.get("final_score", r.get("phonetic_score", 0.0)) or 0.0)
-                b = _low_leap_bridge_from_pair_v27(source, cand, side, depth, phon, float(node.get("semantic_score", 0.0)))
+                b = _low_leap_bridge_from_pair(source, cand, side, depth, phon, float(node.get("semantic_score", 0.0)))
                 if not b:
                     continue
-                if not (_strict_candidate_v25(b) or _creative_candidate_v25(b)):
+                if not (_strict_candidate(b) or _creative_candidate(b)):
                     continue
                 all_bridges.append(b)
-                if len(all_bridges) >= LOW_LEAP_MAX_BRIDGES_V27:
+                if len(all_bridges) >= LOW_LEAP_MAX_BRIDGES:
                     break
-            if len(all_bridges) >= LOW_LEAP_MAX_BRIDGES_V27:
+            if len(all_bridges) >= LOW_LEAP_MAX_BRIDGES:
                 break
-        if len(all_bridges) >= LOW_LEAP_MAX_BRIDGES_V27:
+        if len(all_bridges) >= LOW_LEAP_MAX_BRIDGES:
             break
 
         # Continue walking outward from both sides.
@@ -5930,49 +6460,14 @@ def _mine_iterative_low_leap_bridges_v27(pipe: RetrievalPipeline, pack: dict[str
         if not frontiers["A"] and not frontiers["B"]:
             break
 
-    all_bridges.sort(key=_selection_rank_v25)
-    return all_bridges[:LOW_LEAP_MAX_BRIDGES_V27]
-
-
-# Preserve the base method from this hot-loaded class, then wrap it. Existing
-# server pipeline instances are hot-swapped to this class by _get_pipeline().
-_RETRIEVE_ROW_BASE_V27 = RetrievalPipeline.retrieve_row
-
-
-def _retrieve_row_with_low_leaps_v27(self: RetrievalPipeline, row: pd.Series) -> dict[str, Any]:
-    pack = _RETRIEVE_ROW_BASE_V27(self, row)
-    try:
-        current_ideas = _select_generator_ideas_from_bridges_v24(pack.get("bridge_candidates", []) or [], limit=MAX_GENERATOR_IDEAS_V26)
-        if len(current_ideas) < LOW_LEAP_TARGET_IDEAS_V27:
-            extra = _mine_iterative_low_leap_bridges_v27(self, pack, current_ideas)
-            if extra:
-                existing = pack.get("bridge_candidates", []) or []
-                merged = list(existing) + list(extra)
-                # Keep a larger internal pool so export can pick diverse good ideas.
-                # Do not re-rank Low-leap candidates by old bridge_score / English semantic proximity.
-                merged.sort(key=_selection_rank_v25)
-                pool_limit = max(MAX_BRIDGES, MAX_GENERATOR_IDEAS_V26 * 8, LOW_LEAP_TARGET_IDEAS_V27 * 8)
-                pack["bridge_candidates"] = merged[:pool_limit]
-                diag = dict(pack.get("bridge_diagnostics", {}) or {})
-                diag["low_leap_candidate_count"] = int(len(extra))
-                diag["bridge_count"] = int(len(pack.get("bridge_candidates", []) or []))
-                pack["bridge_diagnostics"] = diag
-    except Exception as e:
-        if RETRIEVAL_DEBUG_PACKS:
-            diag = dict(pack.get("bridge_diagnostics", {}) or {})
-            diag["low_leap_error"] = str(e)
-            pack["bridge_diagnostics"] = diag
-    return pack
-
-
-RetrievalPipeline.retrieve_row = _retrieve_row_with_low_leaps_v27
+    all_bridges.sort(key=_selection_rank)
+    return all_bridges[:LOW_LEAP_MAX_BRIDGES]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Final override v28: additive generator-affordance export by independent lanes.
 #
 # This fixes the export bottleneck without changing retrieval_server.py and
-# without requiring a server restart. The server hot-reloads retrieval.py on each
+# without requiring a server restart. The server hot-reloads retrieval_refactored.py on each
 # request, so these overrides take effect on the next /retrieve call.
 #
 # Selection policy:
@@ -5987,15 +6482,15 @@ RetrievalPipeline.retrieve_row = _retrieve_row_with_low_leaps_v27
 
 # Large by default because this file is an affordance miner. Downstream generator
 # or judge stages can choose how many to use. Override in env if needed.
-MAX_GENERATOR_IDEAS_V28 = int(os.environ.get(
+MAX_GENERATOR_IDEAS = int(os.environ.get(
     "RETRIEVAL_MAX_GENERATOR_IDEAS",
-    str(max(MAX_GENERATOR_IDEAS_V26, MAX_GENERATOR_AFFORDANCES, 64)),
+    str(max(MAX_GENERATOR_IDEAS_COMPENSATION, MAX_GENERATOR_AFFORDANCES, 64)),
 ))
 # Safety cap only, not a ranking target. Set 0 for unlimited per row.
-MAX_GENERATOR_IDEAS_ABSOLUTE_V28 = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS_ABSOLUTE", "200"))
+MAX_GENERATOR_IDEAS_ABSOLUTE = int(os.environ.get("RETRIEVAL_MAX_GENERATOR_IDEAS_ABSOLUTE", "200"))
 
 
-def _bridge_exact_export_key_v28(b: dict[str, Any]) -> tuple[str, str, str]:
+def _bridge_exact_export_key(b: dict[str, Any]) -> tuple[str, str, str]:
     """Exact exported-idea duplicate key only.
 
     Deliberately does NOT use roots/lemmas and does NOT canonicalize A/B order:
@@ -6012,7 +6507,7 @@ def _bridge_exact_export_key_v28(b: dict[str, Any]) -> tuple[str, str, str]:
     return (surface_key(left), surface_key(right), clean(relation))
 
 
-def _low_leap_depth_v28(b: dict[str, Any]) -> int:
+def _low_leap_depth(b: dict[str, Any]) -> int:
     stage = clean(b.get("affordance_stage", b.get("stage", ""))).lower()
     m = re.search(r"(?:^|[^ab])([ab])(\d+)_low_leap|([ab])(\d+)_low_leap", stage)
     if m:
@@ -6028,7 +6523,7 @@ def _low_leap_depth_v28(b: dict[str, Any]) -> int:
     return 0
 
 
-def _bridge_side_v28(b: dict[str, Any]) -> str:
+def _bridge_side(b: dict[str, Any]) -> str:
     side = clean(b.get("source_side") or b.get("left_side") or "").upper()
     if side in {"A", "B"}:
         return side
@@ -6040,11 +6535,14 @@ def _bridge_side_v28(b: dict[str, Any]) -> str:
     return "AB"
 
 
-def _bridge_export_lane_v28(b: dict[str, Any]) -> str:
+def _bridge_export_lane(b: dict[str, Any]) -> str:
     """Independent retention lane for additive export."""
-    side = _bridge_side_v28(b)
+    side = _bridge_side(b)
+    if is_detached_bridge(b):
+        bucket = clean(b.get("retrieval_bucket", "detached")) or "detached"
+        return f"detached_{bucket}"
     if _is_low_leap_bridge(b):
-        depth = _low_leap_depth_v28(b)
+        depth = _low_leap_depth(b)
         return f"low_{side}_depth_{depth}"
 
     stage = clean(b.get("affordance_stage", b.get("stage", ""))).lower()
@@ -6059,36 +6557,40 @@ def _bridge_export_lane_v28(b: dict[str, Any]) -> str:
     return f"close_{side}_to_other"
 
 
-def _candidate_passes_export_junk_gates_v28(b: dict[str, Any]) -> bool:
-    """Same junk/quality gates as current v25/v26, but no competitive caps."""
+def _candidate_passes_export_junk_gates(b: dict[str, Any]) -> bool:
+    """Same junk/quality gates as current strict/creative, but no competitive caps."""
     if not b:
         return False
     idea = compact_generator_idea(b)
     if not idea:
         return False
     left, right = clean(idea.get("left", "")), clean(idea.get("right", ""))
-    if _surface_pair_hard_reject_v25(left, right, b):
+    if _surface_pair_hard_reject(left, right, b):
         return False
+    if is_detached_bridge(b):
+        # Detached buckets have their own hard junk gate and intentionally do not
+        # require the normal strict/creative pivotability threshold.
+        return detached_bridge_is_structurally_valid(b)
     # Preserve the current quality floor. Low-leap is allowed semantic distance,
     # not lower French/phonetic/pivot quality.
-    return bool(_strict_candidate_v25(b) or _creative_candidate_v25(b))
+    return bool(_strict_candidate(b) or _creative_candidate(b))
 
 
-def _lane_sort_key_v28(b: dict[str, Any]) -> tuple[float, float, float, float, float, float]:
+def _lane_sort_key(b: dict[str, Any]) -> tuple[float, float, float, float, float, float]:
     """Lane-local ordering only. This never decides between lanes."""
-    _, q = _candidate_quality_values_v25(b)
-    # Close candidates may use English similarity; Low-leap candidates should not
-    # be punished for being far from English, so use the v25 rank behavior.
-    base = _selection_rank_v25(b)
-    lane = _bridge_export_lane_v28(b)
+    _, q = _candidate_quality_values(b)
+    # Close candidates may use French semantic domain similarity; Low-leap candidates should not
+    # be punished for being far from French semantic domain, so use the  rank behavior.
+    base = _selection_rank(b)
+    lane = _bridge_export_lane(b)
     # Stable tie-breakers for deterministic TSVs.
     left, right = bridge_surface_pair(b)
     return (*base, surface_key(left), surface_key(right), lane)
 
 
-def _additive_generator_ideas_from_bridges_v28(
+def _additive_generator_ideas_from_bridges(
     bridges: list[dict[str, Any]],
-    limit: int = MAX_GENERATOR_IDEAS_V28,
+    limit: int = MAX_GENERATOR_IDEAS,
 ) -> list[dict[str, Any]]:
     """Return all good generator ideas by additive independent lanes.
 
@@ -6101,10 +6603,10 @@ def _additive_generator_ideas_from_bridges_v28(
     lanes: dict[str, list[dict[str, Any]]] = {}
     rejected = 0
     for b in bridges:
-        if not _candidate_passes_export_junk_gates_v28(b):
+        if not _candidate_passes_export_junk_gates(b):
             rejected += 1
             continue
-        lane = _bridge_export_lane_v28(b)
+        lane = _bridge_export_lane(b)
         lanes.setdefault(lane, []).append(b)
 
     # Deterministic lane order: close first, then compensation, then Low-leap by
@@ -6120,27 +6622,33 @@ def _additive_generator_ideas_from_bridges_v28(
             return (2, 0, lane)
         if lane.startswith("compensation_B"):
             return (2, 1, lane)
+        if lane.startswith("detached_A2"):
+            return (3, 0, lane)
+        if lane.startswith("detached_B2"):
+            return (3, 1, lane)
+        if lane.startswith("detached_"):
+            return (3, 2, lane)
         m = re.match(r"low_([AB]+)_depth_(\d+)", lane)
         if m:
             side_rank = 0 if m.group(1) == "A" else 1 if m.group(1) == "B" else 2
-            return (3 + int(m.group(2)), side_rank, lane)
+            return (4 + int(m.group(2)), side_rank, lane)
         return (99, 0, lane)
 
     for lane in lanes:
-        lanes[lane].sort(key=_lane_sort_key_v28)
+        lanes[lane].sort(key=_lane_sort_key)
 
     selected: list[dict[str, Any]] = []
     seen_exact: set[tuple[str, str, str]] = set()
 
     # Additive concatenation. No lane gets a budget that can be stolen by another
     # lane. The absolute limit is a safety rail only.
-    absolute = MAX_GENERATOR_IDEAS_ABSOLUTE_V28 if MAX_GENERATOR_IDEAS_ABSOLUTE_V28 > 0 else 10**9
+    absolute = MAX_GENERATOR_IDEAS_ABSOLUTE if MAX_GENERATOR_IDEAS_ABSOLUTE > 0 else 10**9
     requested_limit = limit if limit and limit > 0 else absolute
     final_limit = min(requested_limit, absolute)
 
     for lane in sorted(lanes, key=lane_order_key):
         for b in lanes[lane]:
-            key = _bridge_exact_export_key_v28(b)
+            key = _bridge_exact_export_key(b)
             if key in seen_exact:
                 continue
             idea = compact_generator_idea(b)
@@ -6157,50 +6665,94 @@ def _additive_generator_ideas_from_bridges_v28(
 
 # Override the historical selector name used throughout the file. The name stays
 # the same so retrieval_server.py and older call sites continue to work.
-def _select_generator_ideas_from_bridges_v24(
+def _select_generator_ideas_from_bridges(
     bridges: list[dict[str, Any]],
-    limit: int = MAX_GENERATOR_IDEAS_V28,
+    limit: int = MAX_GENERATOR_IDEAS,
 ) -> list[dict[str, Any]]:
-    return _additive_generator_ideas_from_bridges_v28(bridges, limit=limit)
+    return _additive_generator_ideas_from_bridges(bridges, limit=limit)
 
 
 def _retrieval_columns_from_pack(pack: dict[str, Any]) -> dict[str, Any]:
+    """Return TSV retrieval columns.
+
+    Default output is intentionally clean: only generator-facing retrieval outputs
+    are written. Set RETRIEVAL_OUTPUT_DEBUG=1 to include diagnostics/bucket counts.
+    Set RETRIEVAL_DEBUG_PACKS=1 to additionally include the compact debug pack.
+    """
     diag = pack.get("bridge_diagnostics", {}) or {}
     bridge_candidates = pack.get("bridge_candidates", []) or []
-    ideas = _additive_generator_ideas_from_bridges_v28(
+    ideas = _additive_generator_ideas_from_bridges(
         bridge_candidates,
-        limit=MAX_GENERATOR_IDEAS_V28,
+        limit=MAX_GENERATOR_IDEAS,
     )
 
-    # Debug counts make it obvious whether generation found candidates but export
-    # removed them. These are compact scalar diagnostics, not schema-breaking.
-    lane_counts: dict[str, int] = {}
-    pass_count = 0
-    for b in bridge_candidates:
-        if _candidate_passes_export_junk_gates_v28(b):
-            pass_count += 1
-            lane = _bridge_export_lane_v28(b)
-            lane_counts[lane] = lane_counts.get(lane, 0) + 1
-
+    # Core output columns only. These are the actual retrieval payload consumed by
+    # the next stage, not diagnostics.
     out = {
         "retrieval_affordances_json": _safe_json_for_tsv(ideas),
         "retrieval_affordance_count": int(len(ideas)),
-        "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
-        "retrieval_bridge_count": int(diag.get("bridge_count", len(bridge_candidates)) or 0),
-        "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
     }
+
+    if not RETRIEVAL_OUTPUT_DEBUG and not RETRIEVAL_DEBUG_PACKS:
+        return out
+
+    # Debug counts make it obvious whether generation found candidates but export
+    # removed them. These are intentionally gated out of normal TSV output.
+    lane_counts: dict[str, int] = {}
+    pass_count = 0
+    for b in bridge_candidates:
+        if _candidate_passes_export_junk_gates(b):
+            pass_count += 1
+            lane = _bridge_export_lane(b)
+            lane_counts[lane] = lane_counts.get(lane, 0) + 1
+
+    exported_bridge_candidates = export_bridge_candidates(bridge_candidates, MAX_GENERATOR_AFFORDANCES)
+    bucket_counts = diag.get("retrieval_exported_bucket_counts") or diag.get("retrieval_bucket_counts_after_final_sanitize") or retrieval_bucket_counts(bridge_candidates)
+    affordance_buckets = group_exported_affordances_by_retrieval_bucket(exported_bridge_candidates)
+
+    if RETRIEVAL_OUTPUT_DEBUG:
+        out.update({
+            "retrieval_fallback_level": clean(pack.get("fallback_level", "")),
+            "retrieval_bridge_count": int(diag.get("bridge_count", len(bridge_candidates)) or 0),
+            "retrieval_prefinal_bridge_candidate_count": int(diag.get("prefinal_bridge_candidate_count", 0) or 0),
+            "retrieval_prefinal_bridge_candidate_limit": int(diag.get("prefinal_bridge_candidate_limit", 0) or 0),
+            "retrieval_best_bridge_score": float(diag.get("best_bridge_score", 0.0) or 0.0),
+            "retrieval_bucket_counts_json": _safe_json_for_tsv(bucket_counts),
+            "retrieval_a1_pool_size": int(diag.get("a1_pool_size", 0) or 0),
+            "retrieval_b1_pool_size": int(diag.get("b1_pool_size", 0) or 0),
+            "retrieval_a1b1_widening_enabled": bool(diag.get("a1b1_widening_enabled", False)),
+            "retrieval_a1b1_per_seed_semantic_k": int(diag.get("a1b1_per_seed_semantic_k", 0) or 0),
+            "retrieval_fasttext_default_disabled_v15": bool(diag.get("fasttext_default_disabled_v15", False)),
+            "retrieval_bucket_counts_before_filter_json": _safe_json_for_tsv(diag.get("retrieval_bucket_counts_before_filter", {})),
+            "retrieval_bucket_counts_after_filter_json": _safe_json_for_tsv(diag.get("retrieval_bucket_counts_after_filter", {})),
+            "retrieval_bucket_counts_after_dedupe_json": _safe_json_for_tsv(diag.get("retrieval_bucket_counts_after_dedupe", {})),
+            "retrieval_detached_rejection_totals_json": _safe_json_for_tsv(diag.get("detached_rejection_totals", {})),
+            "retrieval_detached_rejection_stats_json": _safe_json_for_tsv(diag.get("detached_rejection_stats", [])),
+            "retrieval_detached_diag_version": DETACHED_DIAGNOSTICS_VERSION,
+            "retrieval_detached_neighbors_seen": int(diag.get("detached_neighbors_seen_total", 0) or 0),
+            "retrieval_detached_presemantic_count": int(diag.get("detached_candidates_before_semantic_distance_total", 0) or 0),
+            "retrieval_detached_semantic_scored_count": int(diag.get("detached_semantic_distance_scored_total", 0) or 0),
+            "retrieval_detached_accepted_before_anchor_cap": int(diag.get("detached_accepted_before_anchor_cap_total", 0) or 0),
+            "retrieval_detached_accepted_after_anchor_cap": int(diag.get("detached_accepted_after_anchor_cap_total", 0) or 0),
+            "retrieval_detached_final_input_count": int(diag.get("detached_final_input_count", 0) or 0),
+            "retrieval_detached_final_kept_count": int(diag.get("detached_final_kept_count", 0) or 0),
+            "retrieval_detached_final_rejection_totals_json": _safe_json_for_tsv(diag.get("detached_final_rejection_totals", {})),
+            "retrieval_detached_final_rejections_by_bucket_json": _safe_json_for_tsv(diag.get("detached_final_rejections_by_bucket", {})),
+            "retrieval_affordance_buckets_json": _safe_json_for_tsv(affordance_buckets),
+        })
+
     if RETRIEVAL_DEBUG_PACKS:
         compact = compact_retrieval_pack(pack)
         compact["additive_export_pass_count"] = pass_count
         compact["additive_export_lane_counts"] = lane_counts
         out["retrieval_debug_json"] = _safe_json_for_tsv(compact)
+
     return out
 
 
 def compact_retrieval_pack(pack: dict[str, Any]) -> dict[str, Any]:
     """Compact generator-facing retrieval payload with additive affordances."""
     gen = dict(pack.get("generator_affordance_pack", {}))
-    gen["pun_word_fr"] = pack.get("pun_word_fr", "")
     gen["meaning_A_terms"] = pack.get("meaning_A_terms", gen.get("meaning_A_terms", []))[:8]
     gen["meaning_B_terms"] = pack.get("meaning_B_terms", gen.get("meaning_B_terms", []))[:8]
     gen["fallback_level"] = pack.get("fallback_level", gen.get("fallback_level", ""))
@@ -6208,14 +6760,13 @@ def compact_retrieval_pack(pack: dict[str, Any]) -> dict[str, Any]:
 
     bridges = pack.get("bridge_candidates", gen.get("top_bridge_candidates", [])) or []
     gen["top_bridge_candidates"] = [
-        export_bridge_candidate(b) for b in _additive_export_bridges_v28(bridges, limit=MAX_GENERATOR_IDEAS_V28)
+        export_bridge_candidate(b) for b in _additive_export_bridges(bridges, limit=MAX_GENERATOR_IDEAS)
     ]
     gen["top_semantic_A"] = pack.get("semantic_A_expressions", gen.get("top_semantic_A", []))[:5]
     gen["top_semantic_B"] = pack.get("semantic_B_expressions", gen.get("top_semantic_B", []))[:5]
     gen["top_semantic_blended"] = pack.get("semantic_expressions", gen.get("top_semantic_blended", []))[:5]
     gen["top_phonetic_A"] = pack.get("phonetic_A_candidates", gen.get("top_phonetic_A", []))[:5]
     gen["top_phonetic_B"] = pack.get("phonetic_B_candidates", gen.get("top_phonetic_B", []))[:5]
-    gen["top_phonetic_pun_word"] = pack.get("phonetic_pun_candidates", gen.get("top_phonetic_pun_word", []))[:5]
 
     judge_source = gen.get("top_bridge_candidates", [])[:LLM_JUDGE_CANDIDATE_LIMIT]
     gen["llm_judge_candidates"] = [
@@ -6231,15 +6782,15 @@ def compact_retrieval_pack(pack: dict[str, Any]) -> dict[str, Any]:
     return gen
 
 
-def _additive_export_bridges_v28(bridges: list[dict[str, Any]], limit: int = MAX_GENERATOR_IDEAS_V28) -> list[dict[str, Any]]:
+def _additive_export_bridges(bridges: list[dict[str, Any]], limit: int = MAX_GENERATOR_IDEAS) -> list[dict[str, Any]]:
     """Same additive policy as ideas, but returns bridge dicts for debug pack export."""
     lanes: dict[str, list[dict[str, Any]]] = {}
     for b in bridges or []:
-        if not _candidate_passes_export_junk_gates_v28(b):
+        if not _candidate_passes_export_junk_gates(b):
             continue
-        lanes.setdefault(_bridge_export_lane_v28(b), []).append(b)
+        lanes.setdefault(_bridge_export_lane(b), []).append(b)
     for lane in lanes:
-        lanes[lane].sort(key=_lane_sort_key_v28)
+        lanes[lane].sort(key=_lane_sort_key)
     def lane_order_key(lane: str) -> tuple[int, int, str]:
         if lane == "close_AB_direct":
             return (0, 0, lane)
@@ -6251,17 +6802,23 @@ def _additive_export_bridges_v28(bridges: list[dict[str, Any]], limit: int = MAX
             return (2, 0, lane)
         if lane.startswith("compensation_B"):
             return (2, 1, lane)
+        if lane.startswith("detached_A2"):
+            return (3, 0, lane)
+        if lane.startswith("detached_B2"):
+            return (3, 1, lane)
+        if lane.startswith("detached_"):
+            return (3, 2, lane)
         m = re.match(r"low_([AB]+)_depth_(\d+)", lane)
         if m:
-            return (3 + int(m.group(2)), 0 if m.group(1) == "A" else 1, lane)
+            return (4 + int(m.group(2)), 0 if m.group(1) == "A" else 1, lane)
         return (99, 0, lane)
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
-    absolute = MAX_GENERATOR_IDEAS_ABSOLUTE_V28 if MAX_GENERATOR_IDEAS_ABSOLUTE_V28 > 0 else 10**9
+    absolute = MAX_GENERATOR_IDEAS_ABSOLUTE if MAX_GENERATOR_IDEAS_ABSOLUTE > 0 else 10**9
     final_limit = min(limit if limit and limit > 0 else absolute, absolute)
     for lane in sorted(lanes, key=lane_order_key):
         for b in lanes[lane]:
-            key = _bridge_exact_export_key_v28(b)
+            key = _bridge_exact_export_key(b)
             if key in seen:
                 continue
             nb = dict(b)
@@ -6274,55 +6831,10 @@ def _additive_export_bridges_v28(bridges: list[dict[str, Any]], limit: int = MAX
     return out
 
 
-def export_bridge_candidates(bridges: list[dict[str, Any]], limit: int = MAX_GENERATOR_IDEAS_V28) -> list[dict[str, Any]]:
-    return [export_bridge_candidate(b) for b in _additive_export_bridges_v28(bridges, limit=limit)]
+def export_bridge_candidates(bridges: list[dict[str, Any]], limit: int = MAX_GENERATOR_IDEAS) -> list[dict[str, Any]]:
+    return [export_bridge_candidate(b) for b in _additive_export_bridges(bridges, limit=limit)]
 
 
-# Re-wrap retrieve_row after v28 selector is defined. The v27 wrapper called the
-# global selector at runtime, so this mainly removes the old target backfill cap:
-# Low-leap mining still uses the existing runtime budget, but export no longer
-# makes Low-leap compete against close candidates.
-_RETRIEVE_ROW_BASE_V28 = _RETRIEVE_ROW_BASE_V27
-
-
-def _retrieve_row_with_low_leaps_v28(self: RetrievalPipeline, row: pd.Series) -> dict[str, Any]:
-    pack = _RETRIEVE_ROW_BASE_V28(self, row)
-    try:
-        current_ideas = _additive_generator_ideas_from_bridges_v28(
-            pack.get("bridge_candidates", []) or [],
-            limit=MAX_GENERATOR_IDEAS_V28,
-        )
-        # Mine Low-leap candidates when the row is thin, but never as a competing
-        # backfill lane. They are appended to the internal candidate pool and
-        # exported additively by lane.
-        if len(current_ideas) < LOW_LEAP_TARGET_IDEAS_V27:
-            extra = _mine_iterative_low_leap_bridges_v27(self, pack, current_ideas)
-            if extra:
-                existing = pack.get("bridge_candidates", []) or []
-                # Exact bridge dedupe only; no root collapse and no score top-N.
-                merged: list[dict[str, Any]] = []
-                seen: set[tuple[str, str, str]] = set()
-                for b in list(existing) + list(extra):
-                    key = _bridge_exact_export_key_v28(b)
-                    if key in seen:
-                        continue
-                    merged.append(b)
-                    seen.add(key)
-                pack["bridge_candidates"] = merged
-                diag = dict(pack.get("bridge_diagnostics", {}) or {})
-                diag["low_leap_candidate_count"] = int(len(extra))
-                diag["bridge_count"] = int(len(merged))
-                diag["selection_policy"] = "additive_lanes_exact_dedupe_only_v28"
-                pack["bridge_diagnostics"] = diag
-    except Exception as e:
-        if RETRIEVAL_DEBUG_PACKS:
-            diag = dict(pack.get("bridge_diagnostics", {}) or {})
-            diag["low_leap_error"] = str(e)
-            pack["bridge_diagnostics"] = diag
-    return pack
-
-
-RetrievalPipeline.retrieve_row = _retrieve_row_with_low_leaps_v28
 
 
 if __name__ == "__main__":

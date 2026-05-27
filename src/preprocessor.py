@@ -791,14 +791,20 @@ async def identify_pun_meanings(df, model, start=0, end=-1):
         text_clean = row["text_clean"]
 
         prompt = f"""
-Text: {text_clean}
+        Text: {text_clean}
 
-Step 1: Identify the pun word in this text. Output one word.
-Step 2: Determine whether the pun is homographic or homophonic. Output either "homographic" or "homophonic".
-Step 3: Give a list of synonyms for each of the two meanings of the pun. If it is a homophonic pun, include the relevant homophones in the appropriate lists.
+        1. Identify the pun word.
+        2. Output "homographic" or "homophonic".
+        3. For each meaning, output 3-6 lexical semantic-domain words.
 
-Return only valid JSON.
-"""
+        Rules:
+        - words, not explanations
+        - no phrases like "related to", "associated with", "without"
+        - prefer concrete nouns/adjectives/verbs
+        - single words preferred
+
+        Return only valid JSON.
+        """
 
         log(row.name, text_clean)
         try:
@@ -831,7 +837,7 @@ Return only valid JSON.
         save(chunks[i], f"{identify_dir}{model}/{i}.tsv")
 
 
-async def translate_pun_meanings(df, model, start=0, end=-1, translate_flag=True):
+async def translate_pun_meanings(df, model, start=0, end=-1, translate_flag=True, back_translate_flag=False):
     fr_columns = [
         "pun_word_fr",
         "first_meaning_fr",
@@ -874,16 +880,17 @@ async def translate_pun_meanings(df, model, start=0, end=-1, translate_flag=True
         }
 
         prompt = f"""
-Translate only the VALUES of this JSON object from English to French.
-Do not change the keys.
-Preserve the structure exactly.
-If a value is a list, translate each element.
+        Translate only the VALUES of this JSON object from English to French.
+        Do not change the keys.
+        Prefer lexical words over explanations.
+        Avoid phrases like "related to", "without", "associated with".
+        Single words preferred.
 
-Input JSON:
-{payload}
+        Input JSON:
+        {payload}
 
-Return only valid JSON.
-"""
+        Return only valid JSON.
+        """
 
         log(
             row.name,
@@ -963,9 +970,20 @@ Return only valid JSON.
             chunks[i][fr_columns] = await run_async_chunk(chunks[i], translate, fr_columns)
             save(chunks[i], f"{translate_dir}{model}/t/{i}.tsv")
 
-        translate_df = load(f"{translate_dir}{model}/t/{i}.tsv")
-        translate_df[bt_columns] = await run_async_chunk(translate_df, back_translate, bt_columns)
-        save(translate_df, f"{translate_dir}{model}/{i}.tsv")
+        if back_translate_flag:
+            translate_df = load(f"{translate_dir}{model}/t/{i}.tsv")
+            translate_df[bt_columns] = await run_async_chunk(
+                translate_df,
+                back_translate,
+                bt_columns,
+            )
+            save(translate_df, f"{translate_dir}{model}/{i}.tsv")
+        else:
+            translate_df = load(f"{translate_dir}{model}/t/{i}.tsv")
+            translate_df["pun_word_bt"] = ""
+            translate_df["first_meaning_bt"] = ""
+            translate_df["second_meaning_bt"] = ""
+            save(translate_df, f"{translate_dir}{model}/{i}.tsv")
 
 async def check_french_homonyms(df, model, start=0, end=-1):
     output_columns = ["is_homonym", "first_meaning_overlap", "second_meaning_overlap"]
@@ -1033,7 +1051,8 @@ async def main():
     model = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MODEL
     start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
     end = int(sys.argv[4]) if len(sys.argv) > 4 else -1
-    translate_flag = False if len(sys.argv) > 5 else True
+    translate_flag = "--no-translate" not in sys.argv
+    back_translate_flag = "--backtranslate" in sys.argv
 
     if task == "identify":
         df = load(combined_en_path)
@@ -1042,7 +1061,7 @@ async def main():
     if task == "translate":
         df = load_all(f"{identify_dir}{model}/")
         save(df, f"{identify_dir}{model}.tsv")
-        await translate_pun_meanings(df, model, start, end, translate_flag)
+        await translate_pun_meanings(df, model, start, end, translate_flag, back_translate_flag)
 
     if task == "lows_similarity":
         llm_verify = "--no-llm" not in sys.argv

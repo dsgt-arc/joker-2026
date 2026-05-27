@@ -1,0 +1,15 @@
+relation_type	count
+rhyme_hard_negative	2250638
+strong_rhyme	468351
+consonant_skeleton	292066
+vowel_skeleton	243374
+hard_negative	234830
+identity	125965
+synthetic_r_variant	81280
+near_homophone_edit2	77835
+synthetic_nasal_variant	63193
+exact_homophone	62696
+synthetic_schwa_drop	33647
+weak_rhyme	13285
+near_homophone_edit1	8975
+synthetic_boundary_drop	356

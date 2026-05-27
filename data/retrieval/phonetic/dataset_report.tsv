@@ -1,0 +1,14 @@
+metric	value
+input_rows	244948.0
+items	244948.0
+all_relevance_rows	3956491.0
+train_pairs_raw	780009.0
+train_pairs_clean	773614.0
+train_triplets_raw	777686.0
+train_triplets_clean	771329.0
+eval_qrels_raw	228681.0
+eval_qrels_clean	227868.0
+num_workers	32.0
+near_scan	300.0
+hard_scan	300.0
+train_pair_min_score	0.35

@@ -91,4 +91,4 @@ def eval_rows(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    uvicorn.run("retrieval_server:app", host=HOST, port=PORT, reload=False)
+    uvicorn.run(app, host=HOST, port=PORT, reload=False)
