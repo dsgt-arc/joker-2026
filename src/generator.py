@@ -1,22 +1,23 @@
 """
-JOKER French pun generator.
+JOKER French pun generator v10.
 
-This generator follows the same infrastructure style as preprocessor.py:
+Infrastructure follows preprocessor.py:
   - async chunked execution
   - one OpenRouter/model call per row through get_response_async
   - strict JSON schema
   - chunked TSV output
 
 Input: retrieval-step TSVs, usually data/processed/retrieval/{model}/{chunk}.tsv
-Required source columns, inherited from identify/translate:
+Required columns inherited from identify/translate:
   text_clean, pun_word, pun_type, first_meaning, second_meaning,
   pun_word_fr, first_meaning_fr, second_meaning_fr
 Optional retrieval columns:
-  retrieval_affordances_json, retrieval_affordance_count
+  retrieval_affordances_json, retrieval_affordance_count,
   retrieval_pack_compact, generator_affordance_pack, bridge_candidates
 
 Usage:
-  python generator.py generate google/gemini-3-pro 0 -1
+  python generator_v10.py generate gemini 0 1
+  python generator_v10.py generate google/gemini-3-pro 0 -1
 
 Useful environment variables:
   GENERATOR_DEFAULT_MODEL       default model name
@@ -42,7 +43,7 @@ import pandas as pd
 
 from config import generate_dir
 try:
-    from config import retrieval_dir  # preferred: add retrieval = ... under [dir]
+    from config import retrieval_dir
 except Exception:
     retrieval_dir = ""
 
@@ -51,7 +52,8 @@ from utils import get_response_async
 
 pd.options.mode.chained_assignment = None
 
-DEFAULT_MODEL = os.environ.get("GENERATOR_DEFAULT_MODEL", "google/gemini-3-pro")
+GENERATOR_VERSION = "v10"
+DEFAULT_MODEL = os.environ.get("GENERATOR_DEFAULT_MODEL", os.environ.get("GENERATOR_MODEL", "google/gemini-3-pro"))
 VERBOSE = os.environ.get("GENERATOR_VERBOSE", "1") == "1"
 MAX_CONCURRENCY = int(os.environ.get("GENERATOR_MAX_CONCURRENCY", "8"))
 CHUNK_SIZE = int(os.environ.get("GENERATOR_CHUNK_SIZE", "100"))
@@ -63,6 +65,7 @@ OUTPUT_COLUMNS = [
     "candidate_json",
     "candidate_count",
     "generation_error",
+    "generator_version",
 ]
 
 REQUIRED_INPUT_COLUMNS = [
@@ -76,7 +79,7 @@ REQUIRED_INPUT_COLUMNS = [
     "second_meaning_fr",
 ]
 
-CANDIDATE_STRATEGIES = [
+ALLOWED_STRATEGIES = [
     "retrieval_direct",
     "retrieval_loose",
     "mechanism_preserving",
@@ -85,7 +88,7 @@ CANDIDATE_STRATEGIES = [
     "free_native_french",
 ]
 
-MECHANISMS = [
+ALLOWED_MECHANISMS = [
     "homophone",
     "near_homophone",
     "homograph",
@@ -131,7 +134,6 @@ def safe_list(x: Any) -> list[str]:
                         return [norm_space(v) for v in value if norm_space(v)]
                 except Exception:
                     pass
-        # Conservative fallback for manually inspected or damaged rows.
         parts = re.split(r"\s*[;,]\s*", text)
         if len(parts) > 1:
             return [norm_space(p) for p in parts if norm_space(p)]
@@ -223,168 +225,221 @@ def validate_input(df: pd.DataFrame) -> None:
         raise ValueError("Missing required generator input columns: " + ", ".join(missing))
 
 
-def compact_affordance(raw: dict[str, Any], idx: int) -> dict[str, Any]:
-    left = norm_space(raw.get("left") or raw.get("source_surface") or raw.get("a_surface") or raw.get("source") or raw.get("left_text"))
-    right = norm_space(raw.get("right") or raw.get("candidate_surface") or raw.get("b_surface") or raw.get("candidate") or raw.get("right_text"))
-    relation = norm_space(raw.get("relation") or raw.get("bridge_type") or raw.get("phonetic_relation") or "sound_or_meaning_bridge")
-    bucket = norm_space(raw.get("retrieval_bucket") or raw.get("affordance_bucket") or "")
-    lane = norm_space(raw.get("export_lane") or raw.get("strategy") or "")
-
+def _score_for_sort(raw: dict[str, Any]) -> float:
     scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else {}
-    phonetic = raw.get("phonetic_score", scores.get("phonetic_match", ""))
-    naturalness = raw.get("naturalness_score", scores.get("french_naturalness", ""))
-    usability = raw.get("pivotability_score", scores.get("pun_pivot_usability", ""))
-    overall = raw.get("llm_priority_score", raw.get("bridge_score", scores.get("overall_score", "")))
+    for key in ("llm_priority_score", "overall_score", "bridge_score"):
+        if key in raw:
+            try:
+                return float(raw.get(key) or 0.0)
+            except Exception:
+                pass
+    if "overall_score" in scores:
+        try:
+            return float(scores.get("overall_score") or 0.0)
+        except Exception:
+            pass
+    return 0.0
 
-    why_bits: list[str] = []
-    if left and right:
-        why_bits.append(f"{left!r} and {right!r} are a possible French sound/meaning collision")
+
+def _clean_prompt_value(value: Any) -> Any:
+    """Keep affordance values useful for generation while avoiding prompt junk."""
+    if value is None:
+        return None
+
+    if isinstance(value, float):
+        return round(value, 4)
+
+    if isinstance(value, (int, bool)):
+        return value
+
+    if isinstance(value, str):
+        value = norm_space(value)
+        return value or None
+
+    if isinstance(value, list):
+        cleaned = [_clean_prompt_value(v) for v in value]
+        cleaned = [v for v in cleaned if v not in (None, "", [])]
+        return cleaned[:8] or None
+
+    if isinstance(value, dict):
+        cleaned_dict: dict[str, Any] = {}
+        for k, v in value.items():
+            if k in AFFORDANCE_DROP_KEYS:
+                continue
+            cv = _clean_prompt_value(v)
+            if cv not in (None, "", []):
+                cleaned_dict[str(k)] = cv
+        return cleaned_dict or None
+
+    return None
+
+
+AFFORDANCE_DROP_KEYS = {
+    "retrieval_bucket",
+    "retrieval_bucket_rank",
+    "export_lane",
+}
+
+
+def compact_affordance(raw: dict[str, Any], idx: int) -> dict[str, Any]:
+    """Convert retrieval records into compact French pun ingredients.
+
+    Keep lexical pivots and useful scores. Remove only retrieval bookkeeping fields:
+    retrieval_bucket, retrieval_bucket_rank, and export_lane.
+    """
+    left = norm_space(
+        raw.get("left")
+        or raw.get("pivot_a")
+        or raw.get("source_surface")
+        or raw.get("a_surface")
+        or raw.get("source")
+        or raw.get("left_text")
+        or raw.get("a")
+    )
+    right = norm_space(
+        raw.get("right")
+        or raw.get("pivot_b")
+        or raw.get("candidate_surface")
+        or raw.get("b_surface")
+        or raw.get("candidate")
+        or raw.get("right_text")
+        or raw.get("b")
+    )
+    relation = norm_space(
+        raw.get("relation")
+        or raw.get("bridge_type")
+        or raw.get("phonetic_relation")
+        or raw.get("match_type")
+    )
+
+    out: dict[str, Any] = {"id": idx}
+
+    if left:
+        out["left"] = left
+    if right:
+        out["right"] = right
     if relation:
-        why_bits.append(f"relation={relation}")
-    if bucket:
-        why_bits.append(f"bucket={bucket}")
+        out["relation"] = relation
 
-    return {
-        "id": idx,
-        "left": left,
-        "right": right,
-        "relation": relation,
-        "retrieval_bucket": bucket,
-        "export_lane": lane,
-        "phonetic_score": _round_or_blank(phonetic),
-        "naturalness_score": _round_or_blank(naturalness),
-        "pivot_usability_score": _round_or_blank(usability),
-        "overall_score": _round_or_blank(overall),
-        "why_interesting": "; ".join(why_bits),
+    # Preserve every useful non-bookkeeping field, including nested scores.
+    for key, value in raw.items():
+        if key in AFFORDANCE_DROP_KEYS:
+            continue
+        if key in {"left", "right", "pivot_a", "pivot_b", "relation"}:
+            continue
+
+        cleaned = _clean_prompt_value(value)
+        if cleaned not in (None, "", []):
+            out[key] = cleaned
+
+    # Normalize common score aliases at top level when present.
+    scores = out.get("scores") if isinstance(out.get("scores"), dict) else {}
+    score_aliases = {
+        "phonetic_score": raw.get("phonetic_score", scores.get("phonetic_match")),
+        "semantic_score": raw.get("semantic_score", scores.get("semantic_domain_similarity")),
+        "priority_score": raw.get("priority_score", raw.get("overall_score", scores.get("overall_score"))),
+        "pivotability_score": raw.get("pivotability_score", scores.get("pun_pivot_usability")),
     }
+    for key, value in score_aliases.items():
+        cleaned = _clean_prompt_value(value)
+        if cleaned not in (None, "", []):
+            out[key] = cleaned
 
+    hint_bits: list[str] = []
+    if left and right:
+        hint_bits.append(f"{left} ↔ {right}")
+    elif left:
+        hint_bits.append(left)
+    elif right:
+        hint_bits.append(right)
+    if relation:
+        hint_bits.append(relation)
+    if hint_bits:
+        out["creative_hint"] = "; ".join(hint_bits)
 
-def _round_or_blank(x: Any) -> float | str:
-    try:
-        return round(float(x), 4)
-    except Exception:
-        return ""
+    return {k: v for k, v in out.items() if v not in (None, "", [])}
 
 
 def parse_retrieval_affordances(row: pd.Series) -> list[dict[str, Any]]:
-    """Return compact generator-facing affordances from current or older retrieval outputs."""
-    raw: Any = None
+    """Read affordances from retrieval outputs and return prompt-safe records."""
+    raw_items: list[dict[str, Any]] = []
 
-    # Current compact retrieval output.
-    if "retrieval_affordances_json" in row:
-        raw = safe_json_loads(row.get("retrieval_affordances_json"))
+    direct = safe_json_loads(row.get("retrieval_affordances_json", ""))
+    if isinstance(direct, list):
+        raw_items.extend([x for x in direct if isinstance(x, dict)])
 
-    # Older/full retrieval-pack shapes, kept for compatibility.
-    if not raw:
-        for col in ("generator_affordance_pack", "retrieval_pack_compact", "retrieval_pack"):
-            if col not in row:
-                continue
-            pack = safe_json_loads(row.get(col))
-            if not isinstance(pack, dict):
-                continue
-            if isinstance(pack.get("top_bridge_candidates"), list):
-                raw = pack.get("top_bridge_candidates")
-                break
-            if isinstance(pack.get("bridge_candidates"), list):
-                raw = pack.get("bridge_candidates")
-                break
-            gen = pack.get("generator_affordance_pack")
-            if isinstance(gen, dict) and isinstance(gen.get("top_bridge_candidates"), list):
-                raw = gen.get("top_bridge_candidates")
-                break
+    for col in ("generator_affordance_pack", "retrieval_pack_compact"):
+        value = safe_json_loads(row.get(col, ""))
+        if isinstance(value, dict):
+            top = value.get("top_bridge_candidates")
+            if isinstance(top, list):
+                raw_items.extend([x for x in top if isinstance(x, dict)])
+            nested = value.get("generator_affordance_pack")
+            if isinstance(nested, dict) and isinstance(nested.get("top_bridge_candidates"), list):
+                raw_items.extend([x for x in nested["top_bridge_candidates"] if isinstance(x, dict)])
 
-    if not isinstance(raw, list):
-        return []
+    bridge_candidates = safe_json_loads(row.get("bridge_candidates", ""))
+    if isinstance(bridge_candidates, list):
+        raw_items.extend([x for x in bridge_candidates if isinstance(x, dict)])
 
-    compact: list[dict[str, Any]] = []
+    # Dedupe by left/right/relation, prefer higher retrieval score.
+    raw_items.sort(key=_score_for_sort, reverse=True)
     seen: set[tuple[str, str, str]] = set()
-    for item in raw:
-        if not isinstance(item, dict):
+    compact: list[dict[str, Any]] = []
+    for raw in raw_items:
+        item = compact_affordance(raw, len(compact) + 1)
+        left = norm_space(item.get("left", ""))
+        right = norm_space(item.get("right", ""))
+        relation = norm_space(item.get("relation", ""))
+        if not left and not right:
             continue
-        c = compact_affordance(item, len(compact) + 1)
-        key = (c["left"].lower(), c["right"].lower(), c["relation"].lower())
-        if not c["left"] and not c["right"]:
-            continue
+        key = (left.lower(), right.lower(), relation.lower())
         if key in seen:
             continue
         seen.add(key)
-        compact.append(c)
+        item["id"] = len(compact) + 1
+        compact.append(item)
         if len(compact) >= MAX_RETRIEVAL_AFFORDANCES_IN_PROMPT:
             break
     return compact
 
 
-def build_humor_card(row: pd.Series) -> dict[str, Any]:
-    return {
-        "english_sentence": norm_space(row.get("text_clean", "")),
-        "pun_word_or_trigger": norm_space(row.get("pun_word", "")),
-        "pun_type": norm_space(row.get("pun_type", "")),
-        "english_meaning_A": unique_keep_order(safe_list(row.get("first_meaning", [])), MAX_FIELD_TERMS),
-        "english_meaning_B": unique_keep_order(safe_list(row.get("second_meaning", [])), MAX_FIELD_TERMS),
-        "direct_french_pun_word_hint": norm_space(row.get("pun_word_fr", "")),
-        "french_semantic_field_A": unique_keep_order(safe_list(row.get("first_meaning_fr", [])), MAX_FIELD_TERMS),
-        "french_semantic_field_B": unique_keep_order(safe_list(row.get("second_meaning_fr", [])), MAX_FIELD_TERMS),
-    }
-
-
-def build_generation_prompt(row: pd.Series, candidate_count: int = TARGET_CANDIDATE_COUNT) -> str:
-    humor_card = build_humor_card(row)
+def build_generation_prompt(row: pd.Series, n: int) -> str:
+    text_clean = norm_space(row.get("text_clean", ""))
+    pun_word = norm_space(row.get("pun_word", ""))
+    first_meaning_fr = unique_keep_order(safe_list(row.get("first_meaning_fr", [])), MAX_FIELD_TERMS)
+    second_meaning_fr = unique_keep_order(safe_list(row.get("second_meaning_fr", [])), MAX_FIELD_TERMS)
     affordances = parse_retrieval_affordances(row)
-    payload = {
-        "humor_card": humor_card,
-        "retrieval_affordances": affordances,
-        "candidate_count": candidate_count,
-    }
+
+    schema = """
+{"candidates":[{"generated_pun":"French pun sentence","used_affordance_ids":[1]}]}
+""".strip()
 
     return f"""
-You are an expert native French comedy writer specializing in puns, wordplay, and humorous adaptation.
+You are an expert French comedy writer specializing in puns. Produce 10-12 genuinely funny and natural French puns.
 
-Your task is NOT literal translation.
-Your task is to recreate the humorous effect of the English joke as strong, natural French wordplay.
+Use this English pun as inspiration: {text_clean}
+English pun word: {pun_word}
 
-Primary objective:
-Produce genuinely funny French pun candidates that a native French speaker can understand and enjoy.
+French semantic fields:
+A. {first_meaning_fr}
+B. {second_meaning_fr}
 
-Priority order:
-1. The French sentence is funny and natural.
-2. The wordplay is obvious or quickly recoverable.
-3. The result is a successful French pun, not merely a paraphrase.
-4. Preserve the original wordplay mechanism when it helps.
-5. Preserve a related semantic field when it helps.
-6. Preserve original imagery, grammar, or literal wording only if it improves the joke.
+Your goal is to recreate the humorous effect for a native French audience. A native speaker should be able to immediately identify the wordplay mechanism.
 
-Important:
-- A literal French sentence that is not funny is a failed candidate.
-- You may freely change imagery, objects, setting, and exact meaning to make the joke work.
-- You may use compensation: the French pun may move elsewhere in the sentence.
-- Retrieval affordances are optional creative ingredients, not constraints.
-- Use retrieval affordances heavily when they naturally produce a good French pun.
-- You may reuse one strong affordance for multiple different jokes.
-- You may ignore weak affordances.
-- You do not need to cover every affordance.
-- Do not make near-duplicates.
-- Avoid obscure vocabulary, academic explanations, and English-sounding French.
+The generated puns should explore meaningfully different joke constructions.
+Some should attempt to preserve the original mechanism, semantic field, or structure when helpful.
+Some should disregard the English structure in favor of native French humor.
+Some should use the affordances below creatively (Use each affordance at least once).
+Some should be the best of all these combined.
 
-Generate exactly {candidate_count} distinct French pun candidates.
-Use adaptive creative allocation: choose whichever strategies actually produce the best jokes.
-Possible strategies include retrieval_direct, retrieval_loose, mechanism_preserving, semantic_compensation, idiom_or_expression, and free_native_french.
-These are labels for analysis only; do not force equal numbers of each.
+Avoid candidates that are merely metaphorical, poetic, or clever without a real pun. Keep them concise. Prefer punchline-style jokes over descriptive prose.
 
-Input JSON:
-{json.dumps(payload, ensure_ascii=False, indent=2)}
+French affordances:
+{json.dumps(affordances, ensure_ascii=False)}
 
-For every candidate:
-- french: the French joke sentence only
-- pun_trigger: the French word or phrase carrying the joke
-- mechanism: one of {MECHANISMS}
-- strategy: one of {CANDIDATE_STRATEGIES}
-- used_retrieval: true if any retrieval affordance materially influenced the candidate
-- used_affordance_ids: list of retrieval affordance ids used; empty if none
-- semantic_relation: same_field, loose_theme, or free
-- risk: low, medium, or high
-- why_it_works: brief English explanation of the French wordplay
-
-Return only valid JSON. Do not include markdown. Do not include commentary outside JSON.
+Return ONLY valid minified JSON with this exact shape and no extra text:
+{schema}
 """.strip()
 
 
@@ -398,29 +453,12 @@ RESPONSE_SCHEMA = {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "french": {"type": "string"},
-                    "pun_trigger": {"type": "string"},
-                    "mechanism": {"type": "string"},
-                    "strategy": {"type": "string"},
-                    "used_retrieval": {"type": "boolean"},
-                    "used_affordance_ids": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                    },
-                    "semantic_relation": {"type": "string"},
-                    "risk": {"type": "string"},
-                    "why_it_works": {"type": "string"},
+                    "generated_pun": {"type": "string"},
+                    "used_affordance_ids": {"type": "array", "items": {"type": "integer"}},
                 },
                 "required": [
-                    "french",
-                    "pun_trigger",
-                    "mechanism",
-                    "strategy",
-                    "used_retrieval",
+                    "generated_pun",
                     "used_affordance_ids",
-                    "semantic_relation",
-                    "risk",
-                    "why_it_works",
                 ],
             },
         }
@@ -429,66 +467,52 @@ RESPONSE_SCHEMA = {
 }
 
 
-def normalize_candidate(c: dict[str, Any], model: str) -> dict[str, Any]:
-    french = norm_space(c.get("french", ""))
-    mechanism = norm_space(c.get("mechanism", "other")).lower()
-    strategy = norm_space(c.get("strategy", "free_native_french")).lower()
-    semantic_relation = norm_space(c.get("semantic_relation", "free")).lower()
-    risk = norm_space(c.get("risk", "medium")).lower()
+def normalize_candidate(c: dict[str, Any], affordance_count: int, model: str) -> dict[str, Any] | None:
+    generated_pun = norm_space(c.get("generated_pun", ""))
+    if not generated_pun:
+        return None
 
-    if mechanism not in MECHANISMS:
-        mechanism = "other"
-    if strategy not in CANDIDATE_STRATEGIES:
-        strategy = "free_native_french"
-    if semantic_relation not in {"same_field", "loose_theme", "free"}:
-        semantic_relation = "free"
-    if risk not in {"low", "medium", "high"}:
-        risk = "medium"
-
-    used_ids = c.get("used_affordance_ids", [])
-    if not isinstance(used_ids, list):
-        used_ids = []
-    clean_used_ids: list[int] = []
-    for value in used_ids:
-        try:
-            clean_used_ids.append(int(value))
-        except Exception:
-            pass
+    ids: list[int] = []
+    raw_ids = c.get("used_affordance_ids", [])
+    if isinstance(raw_ids, list):
+        for value in raw_ids:
+            try:
+                ivalue = int(value)
+                if 1 <= ivalue <= affordance_count and ivalue not in ids:
+                    ids.append(ivalue)
+            except Exception:
+                pass
 
     return {
-        "french": french,
-        "pun_trigger": norm_space(c.get("pun_trigger", "")),
-        "mechanism": mechanism,
-        "strategy": strategy,
-        "used_retrieval": bool(c.get("used_retrieval", False)) or bool(clean_used_ids),
-        "used_affordance_ids": sorted(set(clean_used_ids)),
-        "semantic_relation": semantic_relation,
-        "risk": risk,
-        "why_it_works": norm_space(c.get("why_it_works", "")),
+        "generated_pun": generated_pun,
+        "used_affordance_ids": ids,
         "generator_model": model,
+        "generator_version": GENERATOR_VERSION,
     }
 
 
-def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def dedupe_candidates(candidates: list[dict[str, Any]], limit: int = TARGET_CANDIDATE_COUNT) -> list[dict[str, Any]]:
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for c in candidates:
-        french = norm_space(c.get("french", ""))
-        if not french:
-            continue
-        key = re.sub(r"\s+", " ", french.casefold())
-        if key in seen:
+        generated_pun = norm_space(c.get("generated_pun", ""))
+        key = generated_pun.lower()
+        if not key or key in seen:
             continue
         seen.add(key)
-        c["french"] = french
+        c["generated_pun"] = generated_pun
         out.append(c)
+        if len(out) >= limit:
+            break
     return out
 
 
 async def generate_row(row: pd.Series, model: str) -> pd.Series:
     row_id = row.get("id_en", row.name)
+    affordance_count = len(parse_retrieval_affordances(row))
+    prompt = build_generation_prompt(row, TARGET_CANDIDATE_COUNT)
+
     try:
-        prompt = build_generation_prompt(row, TARGET_CANDIDATE_COUNT)
         response = await get_response_async(
             prompt,
             model,
@@ -499,32 +523,34 @@ async def generate_row(row: pd.Series, model: str) -> pd.Series:
         raw_candidates = response.get("candidates", [])
         if not isinstance(raw_candidates, list):
             raw_candidates = []
-        candidates = dedupe_candidates([
-            normalize_candidate(c, model)
-            for c in raw_candidates
-            if isinstance(c, dict)
-        ])
-        log(row.name, row_id, f"generated={len(candidates)}")
-        return pd.Series({
-            "candidate_json": json.dumps(candidates, ensure_ascii=False),
-            "candidate_count": len(candidates),
-            "generation_error": "",
-        })
+
+        candidates: list[dict[str, Any]] = []
+        for raw in raw_candidates:
+            if not isinstance(raw, dict):
+                continue
+            normalized = normalize_candidate(raw, affordance_count, model)
+            if normalized is not None:
+                candidates.append(normalized)
+        candidates = dedupe_candidates(candidates, TARGET_CANDIDATE_COUNT)
+        error = ""
     except Exception as e:
-        return log_and_build_fallback(
-            e,
-            {
-                "candidate_json": "[]",
-                "candidate_count": 0,
-                "generation_error": str(e),
-            },
-        )
+        print(f"Error: {e}")
+        candidates = []
+        error = str(e)
+
+    log(row.name, row_id, f"generated={len(candidates)}", f"affordances={affordance_count}", f"error={bool(error)}")
+    return pd.Series({
+        "candidate_json": json.dumps(candidates, ensure_ascii=False, separators=(",", ":")),
+        "candidate_count": len(candidates),
+        "generation_error": error,
+        "generator_version": GENERATOR_VERSION,
+    })
 
 
 async def generate_french_puns(df: pd.DataFrame, model: str, start: int = 0, end: int = -1) -> None:
     validate_input(df)
     chunks = [df.iloc[i:i + CHUNK_SIZE].copy() for i in range(0, len(df), CHUNK_SIZE)]
-    end = end if end > 0 else len(chunks)
+    end = len(chunks) if end == -1 else end
 
     for i in range(start, end):
         chunk = chunks[i].copy()
@@ -533,58 +559,34 @@ async def generate_french_puns(df: pd.DataFrame, model: str, start: int = 0, end
             lambda row: generate_row(row, model),
             OUTPUT_COLUMNS,
         )
-        save(chunk, f"{generate_dir}{model}/{i}.tsv")
+        out_path = f"{generate_dir}{model}/candidates_{GENERATOR_VERSION}/{i}.tsv"
+        save(chunk, out_path)
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
-def _candidate_input_dirs(model: str) -> list[str]:
-    """Candidate retrieval input dirs, ordered from most explicit to most conventional."""
-    dirs: list[str] = []
-    env_dir = os.environ.get("GENERATOR_INPUT_DIR", "").strip()
-    if env_dir:
-        dirs.append(env_dir)
-
-    model_variants = unique_keep_order([model, model.replace("/", "__"), model.split("/")[-1]])
-    base_dirs: list[str] = []
+def resolve_generator_input_dir(model: str) -> str:
+    explicit = os.environ.get("GENERATOR_INPUT_DIR", "").strip()
+    if explicit:
+        return explicit.rstrip("/") + "/"
     if retrieval_dir:
-        base_dirs.append(str(retrieval_dir))
-    base_dirs.append(str(_repo_root() / "data" / "processed" / "retrieval"))
-
-    for base in base_dirs:
-        for variant in model_variants:
-            dirs.append(str(Path(base) / variant))
-
-    return unique_keep_order(dirs)
-
-
-def load_generator_input(model: str) -> pd.DataFrame:
-    tried: list[str] = []
-    for path in _candidate_input_dirs(model):
-        tried.append(path)
-        p = Path(path)
-        if not p.exists() or not p.is_dir():
-            continue
-        try:
-            df = load_all(str(p) + os.sep)
-            if len(df) > 0:
-                log("Loading generator input:", p)
-                return df
-        except Exception as e:
-            log("Skipping generator input", p, e)
-    raise FileNotFoundError("Could not find generator input retrieval TSVs. Tried: " + " | ".join(tried))
+        return f"{retrieval_dir}{model}/"
+    root = Path(__file__).resolve().parents[1]
+    return str(root / "data" / "processed" / "retrieval" / model) + "/"
 
 
 async def main() -> None:
+    if len(sys.argv) < 2:
+        raise ValueError("Usage: python generator_v10.py generate <model> <start> <end>")
+
     task = sys.argv[1]
     model = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MODEL
     start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
     end = int(sys.argv[4]) if len(sys.argv) > 4 else -1
 
     if task == "generate":
-        df = load_generator_input(model)
+        input_dir = resolve_generator_input_dir(model)
+        log("Loading generator input:", input_dir.rstrip("/"))
+        df = load_all(input_dir)
+        save(df, f"{input_dir.rstrip('/')}.tsv")
         await generate_french_puns(df, model, start, end)
     else:
         raise ValueError(f"Unknown task: {task}")
