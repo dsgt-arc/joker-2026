@@ -1,5 +1,5 @@
 """
-JOKER French pun generator v10.
+JOKER French pun generator v15.
 
 Infrastructure follows preprocessor.py:
   - async chunked execution
@@ -16,8 +16,8 @@ Optional retrieval columns:
   retrieval_pack_compact, generator_affordance_pack, bridge_candidates
 
 Usage:
-  python generator_v10.py generate gemini 0 1
-  python generator_v10.py generate google/gemini-3-pro 0 -1
+  python generator_v15.py generate gemini 0 1
+  python generator_v15.py generate google/gemini-3-pro 0 -1
 
 Useful environment variables:
   GENERATOR_DEFAULT_MODEL       default model name
@@ -41,6 +41,15 @@ from typing import Any, Awaitable, Callable
 
 import pandas as pd
 
+from config import (
+    gemini,
+    gemini_pro,
+    gpt,
+    claude,
+    deepseek,
+    qwen,
+)
+
 from config import generate_dir
 try:
     from config import retrieval_dir
@@ -52,7 +61,7 @@ from utils import get_response_async
 
 pd.options.mode.chained_assignment = None
 
-GENERATOR_VERSION = "v10"
+GENERATOR_VERSION = "v15"
 DEFAULT_MODEL = os.environ.get("GENERATOR_DEFAULT_MODEL", os.environ.get("GENERATOR_MODEL", "google/gemini-3-pro"))
 VERBOSE = os.environ.get("GENERATOR_VERBOSE", "1") == "1"
 MAX_CONCURRENCY = int(os.environ.get("GENERATOR_MAX_CONCURRENCY", "8"))
@@ -60,6 +69,16 @@ CHUNK_SIZE = int(os.environ.get("GENERATOR_CHUNK_SIZE", "100"))
 TARGET_CANDIDATE_COUNT = int(os.environ.get("GENERATOR_CANDIDATE_COUNT", "12"))
 MAX_RETRIEVAL_AFFORDANCES_IN_PROMPT = int(os.environ.get("GENERATOR_MAX_AFFORDANCES_IN_PROMPT", "6"))
 MAX_FIELD_TERMS = int(os.environ.get("GENERATOR_MAX_FIELD_TERMS", "8"))
+
+
+MODEL_ALIASES = {
+    "gemini": gemini,
+    "gemini_pro": gemini_pro,
+    "gpt": gpt,
+    "claude": claude,
+    "deepseek": deepseek,
+    "qwen": qwen,
+}
 
 OUTPUT_COLUMNS = [
     "candidate_json",
@@ -412,28 +431,40 @@ def build_generation_prompt(row: pd.Series, n: int) -> str:
     affordances = parse_retrieval_affordances(row)
 
     schema = """
-{"candidates":[{"generated_pun":"French pun sentence","used_affordance_ids":[1]}]}
+{"candidates":[{"french":"...","pun_trigger":"...","mechanism":"homophone|near_homophone|homograph|polysemy|idiom|paronymy|morphological|compensation|other","strategy":"retrieval_direct|retrieval_loose|mechanism_preserving|semantic_compensation|idiom_or_expression|free_native_french","used_affordance_ids":[1],"semantic_relation":"same_field|loose_theme|free","risk":"low|medium|high"}]}
 """.strip()
 
     return f"""
-You are an expert French comedy writer specializing in puns. Produce 10-12 genuinely funny and natural French puns.
+You are an expert French comedy writer specializing in puns, wordplay, idioms, and humorous adaptation. Write exactly {n} genuinely funny French puns.
 
 Use this English pun as inspiration: {text_clean}
 English pun word: {pun_word}
 
-French semantic fields:
+Relevant French semantic fields:
 A. {first_meaning_fr}
 B. {second_meaning_fr}
 
-Your goal is to recreate the humorous effect for a native French audience. A native speaker should be able to immediately identify the wordplay mechanism.
+Priority order:
+1. Genuinely funny and natural in French.
+2. Clear, obvious wordplay. A native French speaker should be able to immediately identify the pun mechanism without explanation.
+3. Original semantic fields only when they help the joke.
+4. Similar comedic form to the English only when possible. Do not be constrained by the English wording when a stronger French pun is available.
 
-The generated puns should explore meaningfully different joke constructions.
-Some should attempt to preserve the original mechanism, semantic field, or structure when helpful.
-Some should disregard the English structure in favor of native French humor.
-Some should use the affordances below creatively (Use each affordance at least once).
-Some should be the best of all these combined.
+Generate candidates using multiple routes:
+- direct ambiguity or double meaning
+- homophony or near-homophony
+- idiom reinterpretation
+- collision of distant semantic domains
+- a surprising reinterpretation that produces an immediate "aha" moment
+- retrieval-affordance-inspired wordplay
 
-Avoid candidates that are merely metaphorical, poetic, or clever without a real pun. Keep them concise. Prefer punchline-style jokes over descriptive prose.
+Important quality rules:
+- Every candidate must contain a clear linguistic wordplay mechanism. A joke based only on thematic association is a failed candidate.
+- Do not invent fake French words. If a native French speaker would not immediately recognize both source words, reject the candidate.
+- When the English ambiguity does not exist naturally in French, abandon the English mechanism and create a new French ambiguity that preserves the comedic intent.
+- Actively explore each affordance as an alternative search direction. Generate at least one candidate per affordance, as long as the result is recognizable French wordplay.
+- Favor unexpected, memorable pun pivots over safe semantic associations.
+- Keep the jokes compact and punchy.
 
 French affordances:
 {json.dumps(affordances, ensure_ascii=False)}
@@ -453,12 +484,22 @@ RESPONSE_SCHEMA = {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "generated_pun": {"type": "string"},
+                    "french": {"type": "string"},
+                    "pun_trigger": {"type": "string"},
+                    "mechanism": {"type": "string"},
+                    "strategy": {"type": "string"},
                     "used_affordance_ids": {"type": "array", "items": {"type": "integer"}},
+                    "semantic_relation": {"type": "string"},
+                    "risk": {"type": "string"},
                 },
                 "required": [
-                    "generated_pun",
+                    "french",
+                    "pun_trigger",
+                    "mechanism",
+                    "strategy",
                     "used_affordance_ids",
+                    "semantic_relation",
+                    "risk",
                 ],
             },
         }
@@ -467,9 +508,14 @@ RESPONSE_SCHEMA = {
 }
 
 
+def _allowed_value(value: Any, allowed: list[str], default: str) -> str:
+    value = norm_space(value).lower()
+    return value if value in allowed else default
+
+
 def normalize_candidate(c: dict[str, Any], affordance_count: int, model: str) -> dict[str, Any] | None:
-    generated_pun = norm_space(c.get("generated_pun", ""))
-    if not generated_pun:
+    french = norm_space(c.get("french", ""))
+    if not french:
         return None
 
     ids: list[int] = []
@@ -483,24 +529,35 @@ def normalize_candidate(c: dict[str, Any], affordance_count: int, model: str) ->
             except Exception:
                 pass
 
+    semantic_relation = _allowed_value(
+        c.get("semantic_relation", ""),
+        ["same_field", "loose_theme", "free"],
+        "free",
+    )
+    risk = _allowed_value(c.get("risk", ""), ["low", "medium", "high"], "medium")
+
     return {
-        "generated_pun": generated_pun,
+        "french": french,
+        "pun_trigger": norm_space(c.get("pun_trigger", "")),
+        "mechanism": _allowed_value(c.get("mechanism", ""), ALLOWED_MECHANISMS, "other"),
+        "strategy": _allowed_value(c.get("strategy", ""), ALLOWED_STRATEGIES, "free_native_french"),
         "used_affordance_ids": ids,
+        "semantic_relation": semantic_relation,
+        "risk": risk,
         "generator_model": model,
         "generator_version": GENERATOR_VERSION,
     }
-
 
 def dedupe_candidates(candidates: list[dict[str, Any]], limit: int = TARGET_CANDIDATE_COUNT) -> list[dict[str, Any]]:
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for c in candidates:
-        generated_pun = norm_space(c.get("generated_pun", ""))
-        key = generated_pun.lower()
+        french = norm_space(c.get("french", ""))
+        key = french.lower()
         if not key or key in seen:
             continue
         seen.add(key)
-        c["generated_pun"] = generated_pun
+        c["french"] = french
         out.append(c)
         if len(out) >= limit:
             break
@@ -559,7 +616,7 @@ async def generate_french_puns(df: pd.DataFrame, model: str, start: int = 0, end
             lambda row: generate_row(row, model),
             OUTPUT_COLUMNS,
         )
-        out_path = f"{generate_dir}{model}/candidates_{GENERATOR_VERSION}/{i}.tsv"
+        out_path = f"{generate_dir}{model}/{i}.tsv"
         save(chunk, out_path)
 
 
@@ -575,10 +632,11 @@ def resolve_generator_input_dir(model: str) -> str:
 
 async def main() -> None:
     if len(sys.argv) < 2:
-        raise ValueError("Usage: python generator_v10.py generate <model> <start> <end>")
+        raise ValueError("Usage: python generator_v15.py generate <model> <start> <end>")
 
     task = sys.argv[1]
-    model = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MODEL
+    model_arg = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MODEL
+    model = MODEL_ALIASES.get(model_arg, model_arg)
     start = int(sys.argv[3]) if len(sys.argv) > 3 else 0
     end = int(sys.argv[4]) if len(sys.argv) > 4 else -1
 
