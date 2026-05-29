@@ -185,7 +185,15 @@ def load(path):
 
 def load_all(path):
   files = glob.glob(os.path.join(path, "*.tsv"))
-  files = sorted(files, key=lambda x: int(re.findall(r'\d+', x)[-1]))
+  files = sorted(files, key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else -1)
+
+  if not files:
+    raise FileNotFoundError(
+      f"No TSV files found in {path}. "
+      "Generator input is expected at ../data/processed/retrieval/gemini/ "
+      "because retrieval was run with the gemini alias."
+    )
+
   df_list = []
 
   for file in files:
