@@ -123,7 +123,38 @@ translate_dir = config["dir"]["translate"]
 similarity_dir = config["dir"]["similarity"]
 homonym_dir = config["dir"]["homonym"]
 generate_dir = config["dir"]["generate"]
+generate_single_dir = config["dir"].get("generate_single", "../data/processed/generate_single/")
 contrastive_baseline_dir = config["dir"]["contrastive_baseline"]
 contrastive_dir = config["dir"]["contrastive"]
 phonetic_dir = config["dir"]["phonetic"]
 retrieval_dir = config["dir"]["retrieval"]
+
+shuffle_dir = config["dir"].get("shuffle", "../data/processed/shuffle/")
+shuffle_ensemble_dir = config["dir"].get("shuffle_ensemble", f"{shuffle_dir.rstrip('/')}/ensemble/")
+
+def _ensure_slash(path: str) -> str:
+    path = str(path or "").strip()
+    return path.rstrip("/") + "/" if path else path
+
+def _default_shuffle_ensemble_runs() -> list[tuple[str, str]]:
+    return [
+        ("claude", f"{_ensure_slash(generate_dir)}claude/"),
+        ("gemini_pro", f"{_ensure_slash(generate_dir)}gemini_pro/"),
+        ("gpt_single", f"{_ensure_slash(generate_single_dir)}gpt/"),
+        ("gemini_pro_single", f"{_ensure_slash(generate_single_dir)}gemini_pro/"),
+    ]
+
+def _configured_shuffle_ensemble_runs() -> list[tuple[str, str]]:
+    if "shuffle_ensemble" not in config:
+        return _default_shuffle_ensemble_runs()
+
+    runs = []
+    for run_label, source_dir in config["shuffle_ensemble"].items():
+        run_label = str(run_label).strip()
+        source_dir = str(source_dir).strip()
+        if run_label and source_dir:
+            runs.append((run_label, _ensure_slash(source_dir)))
+
+    return runs or _default_shuffle_ensemble_runs()
+
+SHUFFLE_ENSEMBLE_RUNS = _configured_shuffle_ensemble_runs()

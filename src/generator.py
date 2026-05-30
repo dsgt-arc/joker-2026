@@ -426,10 +426,10 @@ A. {first_meaning_fr}
 B. {second_meaning_fr}
 
 Priority order:
-1. Genuinely funny and natural in French.
-2. Clear, obvious wordplay. A native French speaker should be able to immediately identify the pun mechanism without explanation.
+1. Genuinely funny to native French speakers.
+2. Clear, obvious wordplay. A native French speaker should immediately identify the pun mechanism without explanation.
 3. Original semantic fields only when they help the joke.
-4. Similar comedic form to the English only when possible. Do not be constrained by the English wording when a stronger French pun is available.
+4. Similar comedic form to the English only when possible.
 
 Generate candidates using multiple routes:
 - direct ambiguity or double meaning
@@ -439,18 +439,18 @@ Generate candidates using multiple routes:
 - a surprising reinterpretation that produces an immediate "aha" moment
 - retrieval-affordance-inspired wordplay
 
-Important quality rules:
-- Every candidate must contain a clear linguistic wordplay mechanism. A joke based only on thematic association is a failed candidate.
-- Do not invent fake French words. If a native French speaker would not immediately recognize both source words, reject the candidate.
-- When the English ambiguity does not exist naturally in French, abandon the English mechanism and create a new French ambiguity that preserves the comedic intent.
-- Actively explore each affordance as an alternative search direction. Generate at least one candidate per affordance, as long as the result is recognizable French wordplay.
+Requirements:
 - Favor unexpected, memorable pun pivots over safe semantic associations.
+- Do not be constrained by the English wording when a stronger French pun is available.
+- Every candidate must contain a clear linguistic wordplay mechanism. A joke based only on thematic association is a failed candidate.
+- Do not invent fake French words.
+- Actively explore each affordance as an alternative search direction. Generate at least one candidate per affordance, as long as the result is recognizable French wordplay.
 - Keep the jokes compact and punchy.
 
 French affordances:
 {json.dumps(affordances, ensure_ascii=False)}
 
-Return EXACTLY ONE valid minified JSON object with this exact shape and no extra text, no markdown, no code fences:
+Return exactly one minified JSON object and nothing else:
 {schema}
 """.strip()
 
