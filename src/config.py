@@ -139,7 +139,7 @@ def _ensure_slash(path: str) -> str:
 def _default_shuffle_ensemble_runs() -> list[tuple[str, str]]:
     return [
         ("claude", f"{_ensure_slash(generate_dir)}claude/"),
-        ("gemini_pro", f"{_ensure_slash(generate_dir)}gemini_pro/"),
+        ("gemini", f"{_ensure_slash(generate_dir)}gemini/"),
         ("gpt_single", f"{_ensure_slash(generate_single_dir)}gpt/"),
         ("gemini_pro_single", f"{_ensure_slash(generate_single_dir)}gemini_pro/"),
     ]
