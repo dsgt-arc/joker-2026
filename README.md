@@ -59,8 +59,7 @@ root/
 ├── notebooks/               # exploratory notebooks (EDA, A/B evaluation, training)
 ├── tests/
 ├── docs/
-├── config.ini               # model aliases + data paths read by src/config.py
-└── user/                    # per-user scratch directory, not for shared code
+└── config.ini               # model aliases + data paths read by src/config.py
 ```
 
 `archive/` holds code that is no longer part of the active pipeline but is kept for reference (provenance, ablation comparisons, "what did we try before"). Nothing in `src/` imports from it.
@@ -74,7 +73,6 @@ pip install --upgrade pip
 pip install -r requirements.txt
 # only needed for building/training retrieval artifacts (FAISS, phonetic embedding model):
 pip install -r requirements-retrieval.txt
-pip install -e .
 ```
 
 Set the OpenRouter API key used by `src/config.py` for all LLM calls:

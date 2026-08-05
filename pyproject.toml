@@ -1,33 +1,13 @@
 [project]
-name = "joker"
+name = "joker-2026"
 version = "0.1.1"
 authors = [{name = "Russell Taylor", email = "rdtaylorjr@gatech.edu"}, { name = "Adam Brikman", email = "abrikman3@gatech.edu" }, { name = "Prateek Awate", email = "pawate3@gatech.edu" }]
-description = "JOKER DS@GT ARC 2026 Helper Package"
+description = "DS@GT ARC CLEF 2026 JOKER Task 2 (pun translation) system"
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = [
-    "faiss-gpu>=1.7.2",
-    "ipykernel>=6.29.5",
-    "numpy>=2.0.2",
-    "pandas",
-    "panphon>=0.21.2",
-    "torch>=2.6.0",
-    "tqdm>=4.67.1",
-]
-
 
 [project.urls]
 Homepage = "https://github.com/dsgt-arc/joker-2026"
 Issues = "https://github.com/dsgt-arc/joker-2026/issues"
 Joker = "https://www.joker-project.com/"
 CLEF = "https://clef2026.clef-initiative.eu/"
-
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["joker*"]
-namespaces = false
