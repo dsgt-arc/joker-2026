@@ -1,4 +1,4 @@
-# DS@GT ARC · CLEF 2026 JOKER Task 2 — Pun Translation
+# DS@GT ARC CLEF 2026 JOKER Task 2 Pun Translation
 
 Georgia Tech's DS@GT ARC submission to [Task 2 (pun translation)](https://www.joker-project.com/) of the [CLEF 2026 JOKER lab](https://clef2026.clef-initiative.eu/): translating English puns into French while preserving — or recreating — the wordplay.
 
