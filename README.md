@@ -1,15 +1,15 @@
-# DS@GT · CLEF 2026 JOKER Task 2 — Pun Translation
+# DS@GT ARC CLEF 2026 JOKER Task 2 — Pun Translation
 
-**🏆 1st place, CLEF 2026 JOKER Task 2 human evaluation.**
+** First place, CLEF 2026 JOKER Task 2 pun location metric and human evaluation.**
 
-This repository contains Georgia Tech's DS@GT submission to [Task 2 (pun translation)](https://www.joker-project.com/) of the [CLEF 2026 JOKER lab](https://clef2026.clef-initiative.eu/): translating English puns into French while preserving — or recreating — the wordplay. The system treats pun translation as a process of **discovery, exploration, and selection**: a graph-based retrieval stage searches semantic and phonetic neighborhoods in French for *affordances* (sound–meaning bridges that could support new wordplay), multiple LLMs generate competing candidate translations that try to exploit those bridges, and a two-stage multi-persona ranking pipeline selects the best candidate.
+This repository contains Georgia Tech's DS@GT ARC submission to [Task 2 (pun translation)](https://www.joker-project.com/) of the [CLEF 2026 JOKER lab](https://clef2026.clef-initiative.eu/): translating English puns into French while preserving — or recreating — the wordplay. The system treats pun translation as a process of **discovery, exploration, and selection**: a graph-based retrieval stage searches semantic and phonetic neighborhoods in French for *affordances* (sound–meaning bridges that could support new wordplay), multiple LLMs generate competing candidate translations that try to exploit those bridges, and a two-stage multi-persona ranking pipeline selects the best candidate.
 
 Full method and analysis are in the working notes: *Searching for Sound-Meaning Collisions: Graph-Based Affordance Retrieval and Multi-Evaluator Ranking for Pun Translation at CLEF 2026 JOKER Task 2* (Taylor, Brikman, Awate — see [Citation](#citation)).
 
 ## Result highlights
 
-- **1st place** in the official CLEF 2026 JOKER Task 2 human evaluation.
-- **1st on the public automatic-metric leaderboard** at working-notes time, score 37.783 (2nd: single-model gpt-5.5, 37.119; 3rd: all-model ensemble, 35.949).
+- **First place** in the official CLEF 2026 JOKER Task 2 pun location metric and human evaluation.
+- **First place on the public automatic-metric leaderboard** at working-notes time, score 37.783 (2nd: single-model gpt-5.5, 37.119; 3rd: all-model ensemble, 35.949).
 - Retrieval coverage grew from **14% → 50.8%** of source puns vs. the [2025 DS@GT system](#citation) (which itself placed 1st/2nd in the 2025 human evaluation) by adding a 370,450-entry French expression bank and a phonetic embedding model trained on 2.68M positive phonological relation pairs.
 - Exact phonological "same-sound" affordances make up only 10.8% of retrieved candidates but **27.5%** of final selected winners — evidence that the retrieval → generation → ranking pipeline actively concentrates around the strongest sound–meaning collisions rather than treating all retrieved affordances equally.
 
