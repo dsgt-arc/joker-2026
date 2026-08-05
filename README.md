@@ -1,17 +1,18 @@
-# DS@GT ARC CLEF 2026 JOKER Task 2 — Pun Translation
+# DS@GT ARC · CLEF 2026 JOKER Task 2 — Pun Translation
 
-**First place, CLEF 2026 JOKER Task 2 pun location metric and human evaluation.**
+Georgia Tech's DS@GT ARC submission to [Task 2 (pun translation)](https://www.joker-project.com/) of the [CLEF 2026 JOKER lab](https://clef2026.clef-initiative.eu/): translating English puns into French while preserving — or recreating — the wordplay.
 
-This repository contains Georgia Tech's DS@GT ARC submission to [Task 2 (pun translation)](https://www.joker-project.com/) of the [CLEF 2026 JOKER lab](https://clef2026.clef-initiative.eu/): translating English puns into French while preserving — or recreating — the wordplay. The system treats pun translation as a process of **discovery, exploration, and selection**: a graph-based retrieval stage searches semantic and phonetic neighborhoods in French for *affordances* (sound–meaning bridges that could support new wordplay), multiple LLMs generate competing candidate translations that try to exploit those bridges, and a two-stage multi-persona ranking pipeline selects the best candidate.
+FAISS-indexed dense retrieval over a 370K-entry French expression bank and a BGE-M3 embedding model fine-tuned on 2.7M IPA phonetic relations surfaces sound–meaning *affordances* — target-language bridges that may support new wordplay. Claude, Gemini, and GPT compete as generators to build candidate translations around them. A two-stage ranking pipeline, with four LLM-judge personas (Comedian, Linguist, Editor, Translator) voting by weighted Borda count, selects the winner.
 
 Full method and analysis are in the working notes: *Searching for Sound-Meaning Collisions: Graph-Based Affordance Retrieval and Multi-Evaluator Ranking for Pun Translation at CLEF 2026 JOKER Task 2* (Taylor, Brikman, Awate — see [Citation](#citation)).
 
-## Result highlights
+## Findings
 
-- **First place** in the official CLEF 2026 JOKER Task 2 pun location metric and human evaluation.
-- **First place on the public automatic-metric leaderboard** at working-notes time, score 37.783 (2nd: single-model gpt-5.5, 37.119; 3rd: all-model ensemble, 35.949).
-- Retrieval coverage grew from **14% → 50.8%** of source puns vs. the [2025 DS@GT system](#citation) (which itself placed 1st/2nd in the 2025 human evaluation) by adding a 370,450-entry French expression bank and a phonetic embedding model trained on 2.68M positive phonological relation pairs.
-- Exact phonological "same-sound" affordances make up only 10.8% of retrieved candidates but **27.5%** of final selected winners — evidence that the retrieval → generation → ranking pipeline actively concentrates around the strongest sound–meaning collisions rather than treating all retrieved affordances equally.
+- Retrieval coverage grew from 14% to 50.8% of source puns relative to the [2025 DS@GT ARC system](#citation), by adding the French expression bank and the trained phonetic embedding model.
+- Generators actively exploit retrieved affordances, and evaluators progressively concentrate around the strongest sound–meaning bridges as candidates move through the pipeline.
+- Exact phonological "same-sound" affordances make up only 10.8% of retrieved candidates but 27.5% of final selected winners — rare, exact sound correspondences are disproportionately valuable once found.
+- Despite tripling retrieval coverage, roughly half of source puns still yield no usable affordance, indicating retrieval remains the central bottleneck in computational pun translation.
+- Scored first on the public automatic-metric leaderboard at working-notes time (37.783).
 
 ## How the system works
 
@@ -140,7 +141,7 @@ and, for the 2025 predecessor system this one builds on:
 
 ## Team
 
-Russell Taylor, Adam Brikman, Prateek Awate — Georgia Institute of Technology, Data Science at Georgia Tech ([DS@GT](https://dsgt.clef-initiative.eu/) CLEF competition group).
+Russell Taylor, Adam Brikman, Prateek Awate — Georgia Institute of Technology, [DS@GT ARC](https://github.com/dsgt-arc) CLEF competition group.
 
 This research used cyberinfrastructure from the [Partnership for an Advanced Computing Environment (PACE)](https://pace.gatech.edu) at Georgia Tech.
 

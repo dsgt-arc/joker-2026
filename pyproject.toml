@@ -2,7 +2,7 @@
 name = "joker"
 version = "0.1.1"
 authors = [{name = "Russell Taylor", email = "rdtaylorjr@gatech.edu"}, { name = "Adam Brikman", email = "abrikman3@gatech.edu" }, { name = "Prateek Awate", email = "pawate3@gatech.edu" }]
-description = "JOKER DS@GT 2026 Helper Package"
+description = "JOKER DS@GT ARC 2026 Helper Package"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
